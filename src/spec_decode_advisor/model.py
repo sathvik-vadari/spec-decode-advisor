@@ -19,6 +19,9 @@ and each round emits E[j] + 1 tokens for one target forward pass.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
+
+import numpy as np
 
 
 def expected_accepted(p: float, k: int) -> float:
@@ -57,17 +60,33 @@ def acceptance_from_measurement(mean_accepted: float, k: int) -> float:
 
 @dataclass(frozen=True, slots=True)
 class CostModel:
-    """Relative cost of one draft pass to one target pass.
+    """Cost of one speculative round, in units of one plain target pass.
 
-    A round costs one target forward pass over k+1 positions plus k draft
-    passes. `draft_cost_ratio` is the per-pass cost of the draft model relative
-    to the target, and is the term that decides whether deeper drafting pays.
+        round_cost(k) = fixed_cost + draft_cost_ratio * k
+
+    The obvious calibration -- time each model generating on its own and take
+    the ratio -- is wrong twice over, and experiment 01 measured both errors.
+
+    First, `fixed_cost` is not 1.0. A round pays for cache bookkeeping the model
+    has no term for: `_rewind_cache` trims both KV caches back to the accepted
+    prefix every round, whether or not anything was rejected. Fitted at 1.37 on
+    the Qwen2.5 1.5B/0.5B pair against a modelled 1.0.
+
+    Second, `draft_cost_ratio` measured standalone understates the in-loop cost.
+    Timing the draft model by itself gave 0.468; fitting the observed speedup
+    curve gave 0.618. A draft pass inside the speculative loop is more expensive
+    than the same model generating alone, because of the per-token sync the loop
+    forces.
+
+    So calibrate with `fit`, which infers both terms from measured speedups,
+    rather than by timing the two models separately.
     """
 
     draft_cost_ratio: float = 0.25
+    fixed_cost: float = 1.0
 
     def round_cost(self, k: int) -> float:
-        return 1.0 + self.draft_cost_ratio * k
+        return self.fixed_cost + self.draft_cost_ratio * k
 
     def speedup(self, p: float, k: int) -> float:
         """Predicted speedup over plain autoregressive decoding.
@@ -95,3 +114,26 @@ class CostModel:
             else:
                 hi = mid
         return hi
+
+
+def fit(observations: Sequence[tuple[int, float, float]]) -> CostModel:
+    """Recover a cost model from measured speedups.
+
+    Each observation is `(k, p, measured_speedup)`. Since
+
+        speedup = expected_tokens_per_round(p, k) / round_cost(k)
+
+    every observation pins one round cost exactly, and round_cost is linear in
+    k, so two or more observations at different depths determine both terms by
+    least squares. This is the calibration that works: it prices whatever the
+    engine actually does per round, including the parts not in the model.
+    """
+    if len(observations) < 2:
+        raise ValueError("need at least two depths to separate the two terms")
+    ks = np.array([k for k, _, _ in observations], dtype=float)
+    costs = np.array(
+        [expected_tokens_per_round(p, k) / s for k, p, s in observations],
+        dtype=float,
+    )
+    slope, intercept = np.polyfit(ks, costs, 1)
+    return CostModel(draft_cost_ratio=float(slope), fixed_cost=float(intercept))

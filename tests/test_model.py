@@ -2,6 +2,7 @@
 
 import pytest
 
+from spec_decode_advisor import model
 from spec_decode_advisor.model import (
     CostModel,
     acceptance_from_measurement,
@@ -79,3 +80,50 @@ def test_best_depth_beats_every_other_depth():
     cm = CostModel(draft_cost_ratio=0.25)
     k, best = cm.best_depth(0.85, max_k=12)
     assert all(cm.speedup(0.85, other) <= best + 1e-12 for other in range(1, 13))
+
+
+# ---- fitted calibration -------------------------------------------------
+# Timing each model on its own misprices a round: it assumes the target pass
+# costs exactly 1.0 and that a draft pass costs the same inside the speculative
+# loop as outside it. Experiment 01 found both false. `fit` recovers both terms
+# from measured speedups instead.
+
+
+def test_fixed_cost_defaults_to_one_target_pass():
+    assert CostModel(0.5).round_cost(4) == 1.0 + 0.5 * 4
+
+
+def test_round_cost_uses_fitted_intercept():
+    m = CostModel(draft_cost_ratio=0.6, fixed_cost=1.4)
+    assert m.round_cost(0) == 1.4
+    assert abs(m.round_cost(3) - (1.4 + 1.8)) < 1e-12
+
+
+def test_fit_recovers_a_known_cost_model():
+    truth = CostModel(draft_cost_ratio=0.619, fixed_cost=1.378)
+    p = 0.73
+    obs = [(k, p, truth.speedup(p, k)) for k in (1, 2, 4, 8)]
+    got = model.fit(obs)
+    assert abs(got.draft_cost_ratio - 0.619) < 1e-6
+    assert abs(got.fixed_cost - 1.378) < 1e-6
+
+
+def test_fit_recovers_the_model_from_varying_p():
+    # p drifts slightly with depth in real data; the fit should still hold
+    truth = CostModel(draft_cost_ratio=0.5, fixed_cost=1.2)
+    obs = [(k, p, truth.speedup(p, k)) for k, p in ((1, 0.72), (2, 0.73), (4, 0.74), (8, 0.75))]
+    got = model.fit(obs)
+    assert abs(got.draft_cost_ratio - 0.5) < 1e-6
+    assert abs(got.fixed_cost - 1.2) < 1e-6
+
+
+def test_fit_needs_two_depths():
+    with pytest.raises(ValueError):
+        model.fit([(2, 0.7, 1.1)])
+
+
+def test_fitted_model_can_say_do_not_speculate():
+    # the honest answer on the measured pair: overhead eats the whole win
+    m = CostModel(draft_cost_ratio=0.619, fixed_cost=1.378)
+    assert m.best_depth(0.805)[0] == 0
+    assert m.best_depth(0.61)[0] == 0
