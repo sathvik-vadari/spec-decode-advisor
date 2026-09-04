@@ -106,3 +106,46 @@ Not yet honest about: batch size, still entirely unmeasured and still the larges
 1 is the regime where the spare FLOPs verification depends on actually exist.
 
 Next: draft-model comparison, so the tool can answer "which draft model" and not only "what depth".
+
+## 2026-09-04 — which draft, and where the in-loop premium actually lives
+
+Q: against one target, which draft should you use, and does it depend on the domain? And does
+finding 5's "never pays" survive a bigger target?
+
+Built draft swapping, a cross-draft recommender, experiment 02 (7B target x {0.5B, 1.5B, 3B} x 30
+prompts x k in {0,1,2,4}, 49 min under memory pressure) and experiment 03 (the target pass timed
+against tokens verified). 62 tests. Five predictions written into the experiment 02 docstring and
+committed before the run.
+
+Scorecard. P1, acceptance rises with draft size in every domain: yes, +0.03 to +0.05 per doubling,
+but code overtook copy on the 7B target for every draft. P2, per-position cost exceeds the parameter
+ratio most for the smallest draft: yes, 6x for 0.5B against 1.7x for 3B, and standalone timing
+understates it for every draft. P3, fixed cost falls toward 1.0: yes for the 0.5B draft, 1.378 to
+1.112 -- but it rises with draft size (1.16, 1.27), which I did not predict. P4, speculation pays on
+7B: yes, 1.15x pooled, 1.26x on code, every domain above 1.0 with the 0.5B draft. So finding 5 was
+about target size, not about the machine. P5, the best draft depends on the domain: **no.** 0.5B
+wins everywhere, and at k <= 2 the 3B could not have matched it even at perfect acceptance. The
+"which draft" question has a null answer on this hardware: smallest.
+
+The finding I was not looking for. The fitted per-position premium over each draft's standalone
+pass cost was 0.25, 0.29, 0.25 for three drafts of very different size. A draft-independent cost is
+not a draft cost. Timed the 7B pass at 1/2/3/5/9 tokens with a warm cache: +0.21 to +0.30 of a
+one-token pass per extra token, mean 0.25. Verification is not free on an M4 -- a 5-token pass costs
+about 2x a 1-token pass -- and that is the whole premium. Experiment 01's "per-token sync" story was
+wrong; corrected in the README and the CostModel docstring. `c_verify` is the constant that decides
+whether speculation pays, it is hardware-specific, and it is a 30-second measurement. The advisor
+should measure it directly rather than infer it from the fit.
+
+Instrument checks: baseline outputs byte-identical across the three sessions on all 30 prompts;
+baseline tok/s CV 7% across sessions; 16/17/14 of 90 lossless mismatches, same batch-invariance
+signature as before. Memory pressure was real (about 5 GB free, 3B session peaked at 6.3 GB); a
+first run of experiment 03 gave 48 ms and 0.28-0.30, the committed rerun 57 ms and 0.25.
+
+Dead end: tried to explain the draft-dependent fixed cost by the draft's prompt prefill. Fitting per
+domain (copy prompts are 5x longer) shows nothing, and it is quantitatively too small anyway. Left
+open, with memory residency as the untested candidate.
+
+Not yet honest about: batch size, still. And the 70B-on-H100 regime where c_verify goes to zero is
+a roofline argument, not a measurement.
+
+Next: measure c_verify inside the advisor instead of inferring it, then the CLI.
