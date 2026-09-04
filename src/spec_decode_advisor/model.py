@@ -72,14 +72,20 @@ class CostModel:
     prefix every round, whether or not anything was rejected. Fitted at 1.37 on
     the Qwen2.5 1.5B/0.5B pair against a modelled 1.0.
 
-    Second, `draft_cost_ratio` measured standalone understates the in-loop cost.
-    Timing the draft model by itself gave 0.468; fitting the observed speedup
-    curve gave 0.618. A draft pass inside the speculative loop is more expensive
-    than the same model generating alone, because of the per-token sync the loop
-    forces.
+    Second, `draft_cost_ratio` is not the draft's cost alone. It is the cost of
+    one more draft *position*, and a position costs two things: a draft pass, and
+    one more token for the target to verify. Verification is only free if the
+    target pass is bandwidth-bound with compute to spare. On an M4 it is not:
+    experiment 03 timed the 7B pass at 48 ms for one token and +15 ms per extra
+    token, so each verified position costs ~0.3 of a target pass on top of the
+    draft pass. That is why the slope fitted from speedups (0.38, 0.54, 0.70 for
+    0.5B, 1.5B, 3B drafts) sits a near-constant 0.25-0.29 above each draft's
+    standalone pass cost (0.13, 0.25, 0.45). The premium belongs to the target,
+    and it is a hardware constant: on an H100 it should be close to zero.
 
-    So calibrate with `fit`, which infers both terms from measured speedups,
-    rather than by timing the two models separately.
+    So calibrate with `fit`, which prices whatever a position actually costs,
+    rather than by timing the two models separately -- and read the slope as
+    draft + verification, not draft.
     """
 
     draft_cost_ratio: float = 0.25
