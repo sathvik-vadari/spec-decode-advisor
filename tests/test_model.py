@@ -127,3 +127,56 @@ def test_fitted_model_can_say_do_not_speculate():
     m = CostModel(draft_cost_ratio=0.619, fixed_cost=1.378)
     assert m.best_depth(0.805)[0] == 0
     assert m.best_depth(0.61)[0] == 0
+
+
+# ---- choosing between drafts ---------------------------------------------
+# A bigger draft accepts more and costs more per position, so which draft wins
+# is not monotone in draft size. `recommend` searches measured candidates.
+
+from spec_decode_advisor.model import Candidate, recommend  # noqa: E402
+
+
+def test_the_cheaper_draft_wins_when_acceptance_has_saturated():
+    cheap = Candidate("small", p=0.95, cost=CostModel(draft_cost_ratio=0.1))
+    dear = Candidate("large", p=0.97, cost=CostModel(draft_cost_ratio=0.5))
+    rec = recommend([dear, cheap])
+    assert rec.draft == "small"
+    assert rec.speedup > 1.0
+
+
+def test_the_dearer_draft_wins_when_it_buys_enough_acceptance():
+    cheap = Candidate("small", p=0.40, cost=CostModel(draft_cost_ratio=0.1))
+    dear = Candidate("large", p=0.85, cost=CostModel(draft_cost_ratio=0.3))
+    assert recommend([cheap, dear]).draft == "large"
+
+
+def test_no_draft_is_recommended_when_none_pays():
+    cands = [
+        Candidate("a", p=0.15, cost=CostModel(draft_cost_ratio=0.3)),
+        Candidate("b", p=0.20, cost=CostModel(draft_cost_ratio=0.6, fixed_cost=1.4)),
+    ]
+    rec = recommend(cands)
+    assert rec.draft is None
+    assert rec.k == 0
+    assert rec.speedup == 1.0
+    assert len(rec.ranking) == 2          # the losers are still reported
+
+
+def test_ranking_is_complete_and_sorted_best_first():
+    cands = [Candidate(str(i), p=0.5 + 0.1 * i, cost=CostModel(0.2)) for i in range(4)]
+    rec = recommend(cands)
+    speedups = [s for _, _, s in rec.ranking]
+    assert speedups == sorted(speedups, reverse=True)
+    assert {n for n, _, _ in rec.ranking} == {"0", "1", "2", "3"}
+
+
+def test_a_single_candidate_agrees_with_best_depth():
+    cm = CostModel(draft_cost_ratio=0.25, fixed_cost=1.1)
+    rec = recommend([Candidate("only", p=0.8, cost=cm)])
+    k, s = cm.best_depth(0.8)
+    assert (rec.draft, rec.k, rec.speedup) == ("only", k, s)
+
+
+def test_recommendation_survives_an_empty_candidate_list():
+    rec = recommend([])
+    assert rec.draft is None and rec.ranking == ()

@@ -137,3 +137,51 @@ def fit(observations: Sequence[tuple[int, float, float]]) -> CostModel:
     )
     slope, intercept = np.polyfit(ks, costs, 1)
     return CostModel(draft_cost_ratio=float(slope), fixed_cost=float(intercept))
+
+
+# ---- choosing between drafts ----------------------------------------------
+# A bigger draft accepts more and costs more per position. Neither effect is
+# linear in parameter count and they pull in opposite directions, so whether the
+# trade pays is not monotone in draft size and cannot be settled by a rule of
+# thumb. It is a search over measured candidates: each candidate carries its own
+# acceptance and its own fitted cost model, because both change with the draft.
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    """One draft model, as measured against the target on a workload."""
+
+    name: str
+    p: float
+    cost: CostModel
+
+
+@dataclass(frozen=True, slots=True)
+class Recommendation:
+    """`draft is None` means do not speculate at all.
+
+    `ranking` holds every candidate's best (name, k, speedup), best first, so a
+    caller can see how close the runner-up was rather than only who won.
+    """
+
+    draft: str | None
+    k: int
+    speedup: float
+    ranking: tuple[tuple[str, int, float], ...]
+
+
+def recommend(candidates: Sequence[Candidate], max_k: int = 12) -> Recommendation:
+    """The (draft, depth) with the highest predicted speedup, or none.
+
+    A candidate whose best depth is 0 never beats plain decoding, so if the
+    top-ranked candidate is at k=0 the answer is not to speculate.
+    """
+    ranking = []
+    for c in candidates:
+        k, s = c.cost.best_depth(c.p, max_k)
+        ranking.append((c.name, k, s))
+    ranking.sort(key=lambda t: t[2], reverse=True)
+    if not ranking or ranking[0][1] == 0:
+        return Recommendation(draft=None, k=0, speedup=1.0, ranking=tuple(ranking))
+    name, k, s = ranking[0]
+    return Recommendation(draft=name, k=k, speedup=s, ranking=tuple(ranking))
