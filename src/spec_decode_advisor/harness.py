@@ -101,6 +101,10 @@ class Harness:
 
         self._target, self._tokenizer = load(self.target_id)
         self._draft, draft_tok = load(self.draft_id)
+        self._check_vocab(draft_tok)
+        return self
+
+    def _check_vocab(self, draft_tok) -> None:
         # Speculative decoding compares raw token ids, so a mismatched vocabulary
         # would not error -- it would just never accept anything.
         if draft_tok.vocab_size != self._tokenizer.vocab_size:
@@ -108,6 +112,32 @@ class Harness:
                 f"tokenizer mismatch: target vocab {self._tokenizer.vocab_size}, "
                 f"draft vocab {draft_tok.vocab_size}"
             )
+
+    def swap_draft(self, draft_id: str) -> "Harness":
+        """Replace the draft model and keep the target where it is.
+
+        Comparing candidate drafts against one target should not reload the
+        target per candidate: the load is slow, and a fresh load changes the
+        memory layout the timing runs against. The old draft is released before
+        the new one is loaded so peak memory is target + one draft, not target +
+        every candidate -- on a 16 GB machine with a 7B target that is the
+        difference between fitting and swapping.
+        """
+        import gc
+
+        import mlx.core as mx
+        from mlx_lm import load
+
+        self._draft = None
+        gc.collect()
+        try:
+            mx.clear_cache()
+        except AttributeError:  # older mlx
+            mx.metal.clear_cache()
+        draft, draft_tok = load(draft_id)
+        self._check_vocab(draft_tok)
+        self._draft = draft
+        self.draft_id = draft_id
         return self
 
     def _encode(self, prompt: Prompt) -> str:

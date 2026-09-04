@@ -48,3 +48,27 @@ def test_empty_stream():
 def test_only_draft_tokens_yields_nothing():
     # never terminated, so nothing is observable
     assert segment_rounds([True, True, True], 4, 100) == []
+
+
+# ---- swapping drafts -----------------------------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+import pytest  # noqa: E402
+
+from spec_decode_advisor.harness import Harness  # noqa: E402
+
+
+def test_vocab_check_rejects_a_draft_from_another_family():
+    # Speculation compares raw token ids, so a vocab mismatch would not error at
+    # runtime -- it would silently never accept anything.
+    h = Harness("t", "d")
+    h._tokenizer = SimpleNamespace(vocab_size=151643)
+    with pytest.raises(ValueError, match="tokenizer mismatch"):
+        h._check_vocab(SimpleNamespace(vocab_size=32000))
+
+
+def test_vocab_check_accepts_a_sibling():
+    h = Harness("t", "d")
+    h._tokenizer = SimpleNamespace(vocab_size=151643)
+    h._check_vocab(SimpleNamespace(vocab_size=151643))  # no raise
