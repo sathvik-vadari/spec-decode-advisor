@@ -180,3 +180,52 @@ def test_a_single_candidate_agrees_with_best_depth():
 def test_recommendation_survives_an_empty_candidate_list():
     rec = recommend([])
     assert rec.draft is None and rec.ranking == ()
+
+
+# ---- calibrating from direct timings -------------------------------------
+
+from spec_decode_advisor.model import fit, fit_fixed_cost, from_components  # noqa: E402
+
+
+def test_components_add_up_to_the_slope():
+    m = from_components(c_draft=0.10, c_verify=0.25, fixed_cost=1.1)
+    assert m.draft_cost_ratio == pytest.approx(0.35)
+    assert m.round_cost(2) == pytest.approx(1.1 + 0.70)
+
+
+def test_one_depth_pins_the_fixed_cost_exactly_when_the_slope_is_right():
+    truth = CostModel(draft_cost_ratio=0.35, fixed_cost=1.15)
+    p = 0.7
+    observed = truth.speedup(p, 2)
+    m = fit_fixed_cost(2, p, observed, slope=0.35)
+    assert m.fixed_cost == pytest.approx(1.15)
+    # and it then predicts every other depth
+    for k in (1, 3, 4, 8):
+        assert m.speedup(p, k) == pytest.approx(truth.speedup(p, k))
+
+
+def test_a_slope_that_is_too_low_inflates_the_fixed_cost():
+    # the two terms trade off at the observed depth: underestimate the slope by d
+    # and the fixed cost absorbs k*d, which then mispredicts other depths
+    truth = CostModel(draft_cost_ratio=0.40, fixed_cost=1.10)
+    p = 0.7
+    m = fit_fixed_cost(2, p, truth.speedup(p, 2), slope=0.35)
+    assert m.fixed_cost == pytest.approx(1.10 + 2 * 0.05)
+    assert m.speedup(p, 2) == pytest.approx(truth.speedup(p, 2))   # exact where pinned
+    assert m.speedup(p, 8) > truth.speedup(p, 8)                    # optimistic further out
+
+
+def test_one_depth_agrees_with_the_full_fit_on_consistent_data():
+    truth = CostModel(draft_cost_ratio=0.5, fixed_cost=1.3)
+    p = 0.75
+    obs = [(k, p, truth.speedup(p, k)) for k in (1, 2, 4)]
+    full = fit(obs)
+    one = fit_fixed_cost(1, p, obs[0][2], slope=full.draft_cost_ratio)
+    assert one.fixed_cost == pytest.approx(full.fixed_cost)
+
+
+def test_fixed_cost_needs_a_speculative_depth_and_a_positive_speedup():
+    with pytest.raises(ValueError):
+        fit_fixed_cost(0, 0.7, 1.0, slope=0.3)
+    with pytest.raises(ValueError):
+        fit_fixed_cost(2, 0.7, 0.0, slope=0.3)

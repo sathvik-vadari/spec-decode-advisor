@@ -191,3 +191,32 @@ def recommend(candidates: Sequence[Candidate], max_k: int = 12) -> Recommendatio
         return Recommendation(draft=None, k=0, speedup=1.0, ranking=tuple(ranking))
     name, k, s = ranking[0]
     return Recommendation(draft=name, k=k, speedup=s, ranking=tuple(ranking))
+
+
+# ---- calibrating from direct timings ----------------------------------------
+# `fit` needs speedups at two or more depths, which means the whole sweep.
+# Experiment 03 showed the slope is a draft pass plus a verified token, both of
+# which are single-pass timings (see `calibration.py`). That leaves only the
+# fixed cost to pin, and one speculative depth does it.
+
+
+def from_components(c_draft: float, c_verify: float, fixed_cost: float = 1.0) -> CostModel:
+    """A cost model whose slope is built from directly timed parts."""
+    return CostModel(draft_cost_ratio=c_draft + c_verify, fixed_cost=fixed_cost)
+
+
+def fit_fixed_cost(k: int, p: float, measured_speedup: float, slope: float) -> CostModel:
+    """Pin the fixed cost from a single speculative depth, given the slope.
+
+        speedup = E[tokens](p, k) / (fixed + slope * k)
+        fixed   = E[tokens](p, k) / speedup - slope * k
+
+    One observation, one unknown. Everything the model cannot see per round --
+    cache rewinds, host-side work, memory residency -- lands here.
+    """
+    if k <= 0:
+        raise ValueError("need a speculative depth (k >= 1) to observe a round")
+    if measured_speedup <= 0:
+        raise ValueError("speedup must be positive")
+    fixed = expected_tokens_per_round(p, k) / measured_speedup - slope * k
+    return CostModel(draft_cost_ratio=slope, fixed_cost=fixed)
