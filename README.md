@@ -142,8 +142,10 @@ restated, so "copy" acceptance depends on how literally the *target* copies. Unt
 The fitted per-position cost sat a near-constant 0.25–0.29 target-passes above each draft's
 standalone pass cost (0.13, 0.25, 0.45), for three drafts of very different size. A
 draft-independent cost is not a draft cost. Timing the 7B forward pass directly with a warm cache:
-57 ms for one token, and +0.21 to +0.30 of that per additional token verified in the same pass,
-mean 0.25 (`results/03_verification_cost.json`). So
+57 ms for one token, and +0.21 to +0.30 of that per additional token verified in the same pass
+(`results/03_verification_cost.json`). The least-squares slope over all five points is 0.29, and
+the fitted per-position cost minus a directly timed draft pass is 0.29–0.32 for the three drafts
+(`c_draft` = 0.10, 0.23, 0.39), so the decomposition closes to within 0.02 (finding 11). So
 
 ```
 round_cost(k) = fixed_cost + (c_draft + c_verify) · k        c_verify ≈ 0.25 here
@@ -166,6 +168,28 @@ quantitatively too small. Per-domain fits scatter ±0.2 on six prompts each, so 
 is clearly real. Open. One untested candidate is memory residency: the 3B session peaked at 6.3 GB
 on a machine with about 5 GB free, so the draft's weights may be evicted while the target runs and
 re-faulted each round. That would not exist with everything resident in HBM.
+
+**11. Two 30-second timings and one speculative depth calibrate the cost model as well as the
+full sweep.** The direct slope, a timed draft pass plus the timed verification cost, lands within
+0.02 of the slope experiment 02 fitted from three depths, for all three drafts (0.391 vs 0.383,
+0.525 vs 0.535, 0.681 vs 0.702). Pinning the fixed cost from the k=1 run alone and predicting k=2
+and k=4, which the model never saw:
+
+| draft | k | measured | from k=1 + timings | timings only, fixed = 1.0 |
+|---|---|---|---|---|
+| 0.5B | 2 | 1.152 | 1.147 | 1.213 |
+| 0.5B | 4 | 1.026 | 1.017 | 1.058 |
+| 1.5B | 2 | 1.017 | 1.033 | 1.112 |
+| 1.5B | 4 | 0.911 | 0.921 | 0.968 |
+| 3B | 2 | 0.884 | 0.889 | 0.999 |
+| 3B | 4 | 0.783 | 0.795 | 0.858 |
+
+Held-out error is at most 0.016 pooled. Per domain the mean error is +0.03 and the worst domain
+misses by 0.15, which is the six-prompt noise floor seen throughout. Skipping the speculative run
+and assuming a fixed cost of 1.0 misses by 0.03–0.12, so that one run stays; it is also the run
+that measures acceptance, and finding 2 says depth does not change it. The advisor's procedure is
+therefore a baseline, one speculative run at k=1, and two timings. The 49-minute sweep was the
+instrument that established this; it is not the procedure (`results/04_direct_calibration.json`).
 
 ## The approach
 
@@ -209,6 +233,7 @@ speculative decoding, which draft model to use, and at what depth.
 - [x] Fitted cost calibration
 - [x] Draft model comparison
 - [x] Verification cost per position, measured directly
+- [x] Cost calibration from two timings and one speculative depth, validated held-out
 - [ ] Energy: rejected drafts are burned compute, so speculation trades joules for latency
 - [ ] Batch-size effects, which published work says drive the energy crossover
 - [ ] CLI
@@ -274,4 +299,5 @@ uv run pytest
 uv run python experiments/01_depth_invariance.py   # ~6 min
 uv run python experiments/02_draft_comparison.py   # ~50 min; downloads 7B and 3B (~6 GB)
 uv run python experiments/03_verification_cost.py  # ~1 min
+uv run python experiments/04_direct_calibration.py # analysis of 02 and 03, seconds
 ```

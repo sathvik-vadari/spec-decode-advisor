@@ -149,3 +149,27 @@ Not yet honest about: batch size, still. And the 70B-on-H100 regime where c_veri
 a roofline argument, not a measurement.
 
 Next: measure c_verify inside the advisor instead of inferring it, then the CLI.
+
+## 2026-09-06 — two timings and one depth replace the sweep
+
+Q: can the cost side of the advisor be calibrated from two 30-second forward-pass timings plus a
+single speculative depth, instead of a depth sweep?
+
+Analysis only, against experiments 02 and 03 already on disk, with the pass/fail thresholds fixed
+before computing. Built `calibration.py` (least-squares verification cost, draft pass ratio, the
+timing wrapper), `from_components` and `fit_fixed_cost`. 73 tests.
+
+Yes, and more cleanly than expected. Least-squares `c_verify` over 1-9 tokens is 0.295; the
+mean-of-slopes 0.25 I quoted on the 4th was biased low by the noisy short points, and the README
+now carries both. Direct slope = `c_draft` + `c_verify` lands within 0.02 of the fitted slope for all
+three drafts. Pin the fixed cost from k=1 and predict k=2 and k=4 held out: max error 0.016 pooled;
+per domain mean +0.03, worst 0.15, which is the six-prompt noise floor. Timings only with fixed=1.0
+misses by 0.03-0.12, so the one speculative run is necessary -- and it is the same run that
+measures `p`. All four checks pass.
+
+What it means for the tool: baseline, one run at k=1, two timings. The sweep was the instrument
+that earned this; it is no longer the procedure.
+
+Not yet honest about: batch size, still.
+
+Next: the CLI, which now has a complete and cheap procedure to wrap.
