@@ -1,0 +1,346 @@
+{
+  "target": "Qwen2.5-7B-Instruct-4bit",
+  "target_pass_ms": 89.18875001836568,
+  "c_verify": 0.38268563205651895,
+  "max_k": 8,
+  "drafts": [
+    {
+      "name": "Qwen2.5-0.5B-Instruct-4bit",
+      "c_draft": 0.134504071590597,
+      "c_verify": 0.38268563205651895,
+      "fixed_cost": 0.9859866757703147,
+      "p": 0.6821631878557874,
+      "p_ci": [
+        0.6334800097184353,
+        0.7307032495113657
+      ],
+      "measured_speedup_k1": 1.1190723928935902,
+      "baseline_tokens_per_s": 10.212195427995113,
+      "lossless_mismatches": 5,
+      "n_prompts": 30,
+      "slope": 0.5171897036471159,
+      "by_domain": {
+        "chat": {
+          "p": 0.6437768240343348,
+          "ci": [
+            0.5945945945945946,
+            0.6916299559471366
+          ],
+          "n_rounds": 466,
+          "n_prompts": 6
+        },
+        "code": {
+          "p": 0.819047619047619,
+          "ci": [
+            0.7886986639462946,
+            0.8523431010409853
+          ],
+          "n_rounds": 420,
+          "n_prompts": 6
+        },
+        "copy": {
+          "p": 0.8,
+          "ci": [
+            0.7510729613733905,
+            0.86
+          ],
+          "n_rounds": 310,
+          "n_prompts": 6
+        },
+        "factual": {
+          "p": 0.679814385150812,
+          "ci": [
+            0.609704641350211,
+            0.7511415525114156
+          ],
+          "n_rounds": 431,
+          "n_prompts": 6
+        },
+        "prose": {
+          "p": 0.525987525987526,
+          "ci": [
+            0.4522307312252965,
+            0.600418410041841
+          ],
+          "n_rounds": 481,
+          "n_prompts": 6
+        }
+      }
+    },
+    {
+      "name": "Qwen2.5-1.5B-Instruct-4bit",
+      "c_draft": 0.2788286082553973,
+      "c_verify": 0.38268563205651895,
+      "fixed_cost": 1.0104338830783994,
+      "p": 0.7389597644749755,
+      "p_ci": [
+        0.690212792220503,
+        0.7881852590915348
+      ],
+      "measured_speedup_k1": 1.0400799762547512,
+      "baseline_tokens_per_s": 9.984820273080574,
+      "lossless_mismatches": 5,
+      "n_prompts": 30,
+      "slope": 0.6615142403119163,
+      "by_domain": {
+        "chat": {
+          "p": 0.6695842450765864,
+          "ci": [
+            0.625531914893617,
+            0.7184684684684685
+          ],
+          "n_rounds": 457,
+          "n_prompts": 6
+        },
+        "code": {
+          "p": 0.8817733990147784,
+          "ci": [
+            0.8540145985401459,
+            0.91
+          ],
+          "n_rounds": 406,
+          "n_prompts": 6
+        },
+        "copy": {
+          "p": 0.8208469055374593,
+          "ci": [
+            0.7527272727272727,
+            0.8919350201265093
+          ],
+          "n_rounds": 307,
+          "n_prompts": 6
+        },
+        "factual": {
+          "p": 0.7548543689320388,
+          "ci": [
+            0.6550185160772284,
+            0.8526773406355947
+          ],
+          "n_rounds": 412,
+          "n_prompts": 6
+        },
+        "prose": {
+          "p": 0.6118421052631579,
+          "ci": [
+            0.5304347826086957,
+            0.6946902654867256
+          ],
+          "n_rounds": 456,
+          "n_prompts": 6
+        }
+      }
+    },
+    {
+      "name": "Qwen2.5-3B-Instruct-4bit",
+      "c_draft": 0.5189396971524232,
+      "c_verify": 0.38268563205651895,
+      "fixed_cost": 0.7465683959509276,
+      "p": 0.7762762762762763,
+      "p_ci": [
+        0.7363576868158019,
+        0.8176357970802351
+      ],
+      "measured_speedup_k1": 1.0777108595677871,
+      "baseline_tokens_per_s": 9.612993930470468,
+      "lossless_mismatches": 5,
+      "n_prompts": 30,
+      "slope": 0.9016253292089421,
+      "by_domain": {
+        "chat": {
+          "p": 0.7252252252252253,
+          "ci": [
+            0.6857142857142857,
+            0.7731481481481481
+          ],
+          "n_rounds": 444,
+          "n_prompts": 6
+        },
+        "code": {
+          "p": 0.8845208845208845,
+          "ci": [
+            0.8592233009708737,
+            0.9104477611940298
+          ],
+          "n_rounds": 407,
+          "n_prompts": 6
+        },
+        "copy": {
+          "p": 0.888135593220339,
+          "ci": [
+            0.8472222222222222,
+            0.924187725631769
+          ],
+          "n_rounds": 295,
+          "n_prompts": 6
+        },
+        "factual": {
+          "p": 0.8009950248756219,
+          "ci": [
+            0.7589041095890411,
+            0.8393285371702638
+          ],
+          "n_rounds": 402,
+          "n_prompts": 6
+        },
+        "prose": {
+          "p": 0.6333333333333333,
+          "ci": [
+            0.5749192109603797,
+            0.6857142857142857
+          ],
+          "n_rounds": 450,
+          "n_prompts": 6
+        }
+      }
+    }
+  ],
+  "overall": {
+    "draft": "Qwen2.5-0.5B-Instruct-4bit",
+    "k": 1,
+    "speedup": 1.1190723928935902,
+    "ranking": [
+      [
+        "Qwen2.5-0.5B-Instruct-4bit",
+        1,
+        1.1190723928935902
+      ],
+      [
+        "Qwen2.5-3B-Instruct-4bit",
+        1,
+        1.0777108595677871
+      ],
+      [
+        "Qwen2.5-1.5B-Instruct-4bit",
+        1,
+        1.0400799762547512
+      ]
+    ]
+  },
+  "by_domain": {
+    "chat": {
+      "draft": "Qwen2.5-0.5B-Instruct-4bit",
+      "k": 1,
+      "speedup": 1.0935355601259482,
+      "ranking": [
+        [
+          "Qwen2.5-0.5B-Instruct-4bit",
+          1,
+          1.0935355601259482
+        ],
+        [
+          "Qwen2.5-3B-Instruct-4bit",
+          1,
+          1.0467369210848583
+        ],
+        [
+          "Qwen2.5-1.5B-Instruct-4bit",
+          0,
+          1.0
+        ]
+      ]
+    },
+    "code": {
+      "draft": "Qwen2.5-0.5B-Instruct-4bit",
+      "k": 2,
+      "speedup": 1.2323937934745293,
+      "ranking": [
+        [
+          "Qwen2.5-0.5B-Instruct-4bit",
+          2,
+          1.2323937934745293
+        ],
+        [
+          "Qwen2.5-3B-Instruct-4bit",
+          1,
+          1.1433855473136763
+        ],
+        [
+          "Qwen2.5-1.5B-Instruct-4bit",
+          2,
+          1.1396360051017311
+        ]
+      ]
+    },
+    "copy": {
+      "draft": "Qwen2.5-0.5B-Instruct-4bit",
+      "k": 2,
+      "speedup": 1.2077019211780378,
+      "ranking": [
+        [
+          "Qwen2.5-0.5B-Instruct-4bit",
+          2,
+          1.2077019211780378
+        ],
+        [
+          "Qwen2.5-3B-Instruct-4bit",
+          1,
+          1.1455786807082982
+        ],
+        [
+          "Qwen2.5-1.5B-Instruct-4bit",
+          1,
+          1.0890570586874502
+        ]
+      ]
+    },
+    "factual": {
+      "draft": "Qwen2.5-0.5B-Instruct-4bit",
+      "k": 1,
+      "speedup": 1.1175098332784068,
+      "ranking": [
+        [
+          "Qwen2.5-0.5B-Instruct-4bit",
+          1,
+          1.1175098332784068
+        ],
+        [
+          "Qwen2.5-3B-Instruct-4bit",
+          1,
+          1.092708337244113
+        ],
+        [
+          "Qwen2.5-1.5B-Instruct-4bit",
+          1,
+          1.0495866135927763
+        ]
+      ]
+    },
+    "prose": {
+      "draft": "Qwen2.5-0.5B-Instruct-4bit",
+      "k": 1,
+      "speedup": 1.01517529604805,
+      "ranking": [
+        [
+          "Qwen2.5-0.5B-Instruct-4bit",
+          1,
+          1.01517529604805
+        ],
+        [
+          "Qwen2.5-1.5B-Instruct-4bit",
+          0,
+          1.0
+        ],
+        [
+          "Qwen2.5-3B-Instruct-4bit",
+          0,
+          1.0
+        ]
+      ]
+    }
+  },
+  "config": {
+    "target": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    "drafts": [
+      "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+      "mlx-community/Qwen2.5-3B-Instruct-4bit"
+    ],
+    "prompts": "builtin",
+    "n_prompts": 30,
+    "max_tokens": 128,
+    "repeats": 25
+  },
+  "skipped": {},
+  "partial": false,
+  "elapsed_s": 2465.1825593749527
+}
