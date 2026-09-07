@@ -140,12 +140,30 @@ class Harness:
         self.draft_id = draft_id
         return self
 
+    @property
+    def target(self):
+        return self._target
+
+    @property
+    def draft(self):
+        return self._draft
+
+    @property
+    def tokenizer(self):
+        return self._tokenizer
+
     def _encode(self, prompt: Prompt) -> str:
         return self._tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt.text}],
             add_generation_prompt=True,
             tokenize=False,
         )
+
+    def encode_ids(self, prompt: Prompt):
+        """The chat-templated prompt as a token-id array, for timing passes."""
+        import mlx.core as mx
+
+        return mx.array(self._tokenizer.encode(self._encode(prompt)))
 
     def run(self, prompt: Prompt, k: int) -> RunResult:
         """One greedy generation. `k = 0` means no speculation at all."""
