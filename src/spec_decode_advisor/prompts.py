@@ -105,3 +105,31 @@ DOMAINS: tuple[str, ...] = ("copy", "code", "factual", "chat", "prose")
 
 def by_domain(domain: str) -> tuple[Prompt, ...]:
     return tuple(p for p in PROMPTS if p.domain == domain)
+
+
+def load_prompts(path: str) -> tuple[Prompt, ...]:
+    """A workload from disk.
+
+    `.jsonl`: one object per line with `text`, and optionally `id` and `domain`.
+    Anything else: one prompt per line, blank lines skipped, all in one domain
+    called "workload". Domains only matter if you want the per-domain breakdown;
+    the pooled recommendation does not need them.
+    """
+    import json
+    from pathlib import Path
+
+    lines = [ln for ln in Path(path).read_text().splitlines() if ln.strip()]
+    prompts: list[Prompt] = []
+    if path.endswith(".jsonl"):
+        for i, ln in enumerate(lines, 1):
+            obj = json.loads(ln)
+            if "text" not in obj:
+                raise ValueError(f"{path}:{i}: missing 'text'")
+            prompts.append(
+                Prompt(str(obj.get("id", f"p{i:03d}")), str(obj.get("domain", "workload")), obj["text"])
+            )
+    else:
+        prompts = [Prompt(f"p{i:03d}", "workload", ln) for i, ln in enumerate(lines, 1)]
+    if not prompts:
+        raise ValueError(f"{path}: no prompts")
+    return tuple(prompts)
