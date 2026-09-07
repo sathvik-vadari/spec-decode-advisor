@@ -9,6 +9,9 @@ dependencies = [
     "numpy>=2.5.2",
 ]
 
+[project.scripts]
+spec-decode-advisor = "spec_decode_advisor.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
