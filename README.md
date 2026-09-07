@@ -221,8 +221,27 @@ run.
 
 ## The application
 
-A CLI: point it at your prompts and candidate draft models, and it reports whether to enable
-speculative decoding, which draft model to use, and at what depth.
+```bash
+uv run spec-decode-advisor \
+    --target mlx-community/Qwen2.5-7B-Instruct-4bit \
+    --draft  mlx-community/Qwen2.5-0.5B-Instruct-4bit \
+    --draft  mlx-community/Qwen2.5-1.5B-Instruct-4bit \
+    --prompts my_workload.jsonl --json report.json
+```
+
+Point it at a target, one or more candidate drafts, and your prompts (`.jsonl` with `text` and
+optional `id` and `domain`, or one prompt per line; omit for the built-in 30-prompt set). It prints
+the per-draft cost constants, acceptance per domain with a prompt-level bootstrap CI, and a
+recommendation: which draft, what depth, predicted speedup — or "do not speculate".
+
+What it costs to run is the point. Per model, two forward-pass timings (about 30 seconds). Per
+prompt per draft, two generations: one plain, one at k=1. That is the whole procedure, and
+experiment 04 is the evidence that it predicts the depths it never ran to within 0.02 of a full
+sweep. The sweep was how the procedure was earned; the tool does not repeat it.
+
+The recommendation is honest about its own scope: every constant it reports is measured on the
+machine it ran on. `c_verify` in particular — what each extra verified token costs the target — is
+the number that separates an M4 from an H100, and the tool prints it first.
 
 ## Status
 
@@ -234,9 +253,9 @@ speculative decoding, which draft model to use, and at what depth.
 - [x] Draft model comparison
 - [x] Verification cost per position, measured directly
 - [x] Cost calibration from two timings and one speculative depth, validated held-out
+- [x] CLI: `spec-decode-advisor --target ... --draft ... [--prompts ...] [--json ...]`
 - [ ] Energy: rejected drafts are burned compute, so speculation trades joules for latency
 - [ ] Batch-size effects, which published work says drive the energy crossover
-- [ ] CLI
 
 ## Threats to validity
 
@@ -296,6 +315,7 @@ by batch size.
 ```bash
 uv sync
 uv run pytest
+uv run spec-decode-advisor --target <id> --draft <id> [--draft <id>] [--prompts FILE] [--json OUT]
 uv run python experiments/01_depth_invariance.py   # ~6 min
 uv run python experiments/02_draft_comparison.py   # ~50 min; downloads 7B and 3B (~6 GB)
 uv run python experiments/03_verification_cost.py  # ~1 min
