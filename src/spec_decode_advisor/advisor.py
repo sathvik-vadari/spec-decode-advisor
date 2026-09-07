@@ -174,6 +174,12 @@ def render(rep: Report) -> str:
         out.append(f"{d.name:>8} {d.c_draft:>8.3f} {d.c_draft + d.c_verify:>6.3f} {d.fixed_cost:>6.3f} "
                    f"{d.p:>6.3f} [{d.p_ci[0]:.3f}, {d.p_ci[1]:.3f}] {d.measured_speedup_k1:>9.2f} "
                    f"{k:>7} {s:>6.2f} {d.n_prompts - d.lossless_mismatches:>4}/{d.n_prompts:<4}")
+    low = [d for d in rep.drafts if d.fixed_cost < 0.95]
+    if low:
+        names = ", ".join(f"{d.name} {d.fixed_cost:.2f}" for d in low)
+        out.append(f"  WARNING: pinned fixed cost below one target pass ({names}). The k=1 run paid less than "
+                   "the sum of its timed parts, so the pass timings overstate in-loop cost -- usually a busy "
+                   "host or a throttled GPU. Predictions at other depths will be pessimistic.")
     out.append("")
     if len(rep.by_domain) > 1:
         out.append("by domain")

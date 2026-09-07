@@ -123,3 +123,17 @@ def test_no_drift_no_warning_and_one_timing_is_accepted_for_many_drafts():
     assert "WARNING" not in render(rep)
     with pytest.raises(ValueError):
         build_report("t", [TARGET, TARGET, TARGET], [d1, d2])
+
+
+def test_a_fixed_cost_below_one_pass_is_flagged():
+    # generate the k=1 runs as if the loop were cheaper than its timed parts
+    runs = _synthetic({"w": 0.75}, fixed_cost=0.70)
+    d = analyse_draft("d", runs, DRAFT, TARGET)
+    assert d.fixed_cost == pytest.approx(0.70)
+    text = render(build_report("t", TARGET, [d]))
+    assert "WARNING" in text and "below one target pass" in text
+
+
+def test_a_sane_fixed_cost_is_not_flagged():
+    d = analyse_draft("d", _synthetic({"w": 0.75}, fixed_cost=1.1), DRAFT, TARGET)
+    assert "below one target pass" not in render(build_report("t", TARGET, [d]))
