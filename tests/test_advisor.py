@@ -103,3 +103,23 @@ def test_render_and_json_carry_the_recommendation_and_the_constants():
     assert j["drafts"][0]["by_domain"]["code"]["p"] == pytest.approx(0.8)
     assert j["max_k"] == 6
     assert j["drafts"][0]["slope"] == pytest.approx(0.35)
+
+
+def test_target_drift_across_draft_sessions_is_reported():
+    d1 = analyse_draft("a", _synthetic({"w": 0.7}, 1.1), DRAFT, TARGET)
+    slow = PassLatency({n: t * 1.5 for n, t in TARGET.seconds.items()})     # same ratios, 50% slower
+    d2 = analyse_draft("b", _synthetic({"w": 0.7}, 1.1), DRAFT, slow)
+    rep = build_report("t", [TARGET, slow], [d1, d2])
+    assert rep.target_drift == pytest.approx(0.5)
+    assert "WARNING" in render(rep) and "50%" in render(rep)
+    assert to_json(rep)["target_pass_ms_by_draft"] == {"a": pytest.approx(50.0), "b": pytest.approx(75.0)}
+
+
+def test_no_drift_no_warning_and_one_timing_is_accepted_for_many_drafts():
+    d1 = analyse_draft("a", _synthetic({"w": 0.7}, 1.1), DRAFT, TARGET)
+    d2 = analyse_draft("b", _synthetic({"w": 0.7}, 1.1), DRAFT, TARGET)
+    rep = build_report("t", TARGET, [d1, d2])
+    assert rep.target_drift == 0.0
+    assert "WARNING" not in render(rep)
+    with pytest.raises(ValueError):
+        build_report("t", [TARGET, TARGET, TARGET], [d1, d2])

@@ -67,6 +67,19 @@ class Report:
     overall: Recommendation
     by_domain: dict[str, Recommendation]
     max_k: int
+    target_pass_ms_by_draft: dict[str, float]
+
+    @property
+    def target_drift(self) -> float:
+        """max / min of the target's one-token pass across draft sessions, minus 1.
+
+        The target is timed again for every draft, so this is free, and it is
+        the check that the machine stayed the same while the tool ran. The
+        first 7B replication of this tool measured the target at 89 ms where
+        experiment 03 had 57 ms three days earlier, and every ratio moved with
+        it; ratios are only comparable across runs if this stays small."""
+        xs = list(self.target_pass_ms_by_draft.values())
+        return max(xs) / min(xs) - 1.0 if len(xs) > 1 and min(xs) > 0 else 0.0
 
 
 def analyse_draft(
@@ -115,10 +128,16 @@ def analyse_draft(
 
 def build_report(
     target: str,
-    target_latency: PassLatency,
+    target_latency: PassLatency | Sequence[PassLatency],
     drafts: Sequence[DraftReport],
     max_k: int = 8,
 ) -> Report:
+    """`target_latency` is one timing, or one per draft in the same order."""
+    lats = [target_latency] if isinstance(target_latency, PassLatency) else list(target_latency)
+    if len(lats) not in (1, len(drafts)):
+        raise ValueError("give one target timing, or one per draft")
+    by_draft = {d.name: lat.one_token * 1e3 for d, lat in zip(drafts, lats if len(lats) > 1 else lats * len(drafts))}
+    first = lats[0]
     overall = recommend([d.candidate() for d in drafts], max_k=max_k)
     domains = sorted({dom for d in drafts for dom in d.by_domain})
     by_domain = {
@@ -126,9 +145,9 @@ def build_report(
         for dom in domains
     }
     return Report(
-        target=target, target_pass_ms=target_latency.one_token * 1e3,
-        c_verify=verification_cost(target_latency.seconds), drafts=tuple(drafts),
-        overall=overall, by_domain=by_domain, max_k=max_k,
+        target=target, target_pass_ms=first.one_token * 1e3,
+        c_verify=verification_cost(first.seconds), drafts=tuple(drafts),
+        overall=overall, by_domain=by_domain, max_k=max_k, target_pass_ms_by_draft=by_draft,
     )
 
 
@@ -143,6 +162,10 @@ def render(rep: Report) -> str:
     out.append(f"target {rep.target}")
     out.append(f"  one-token pass {rep.target_pass_ms:.1f} ms; each extra verified token costs "
                f"{rep.c_verify:.2f} of a pass" + ("  (verification is not free here)" if rep.c_verify > 0.1 else ""))
+    if rep.target_drift > 0.10:
+        passes = ", ".join(f"{n} {ms:.0f} ms" for n, ms in rep.target_pass_ms_by_draft.items())
+        out.append(f"  WARNING: the target's pass time moved {rep.target_drift:.0%} between draft sessions "
+                   f"({passes}). The machine did not hold still; compare drafts with care.")
     out.append("")
     out.append(f"{'draft':>8} {'c_draft':>8} {'slope':>6} {'fixed':>6} {'p':>6} {'95% CI':>16} "
                f"{'k=1 meas':>9} {'best k':>7} {'pred':>6} {'lossless':>9}")
@@ -175,6 +198,8 @@ def to_json(rep: Report) -> dict:
     return {
         "target": rep.target,
         "target_pass_ms": rep.target_pass_ms,
+        "target_pass_ms_by_draft": rep.target_pass_ms_by_draft,
+        "target_drift": rep.target_drift,
         "c_verify": rep.c_verify,
         "max_k": rep.max_k,
         "drafts": [

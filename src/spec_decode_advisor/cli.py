@@ -66,8 +66,6 @@ def main(argv: list[str] | None = None) -> int:
     say(f"loading {_short(args.target)} + {_short(args.draft[0])}")
     h = Harness(args.target, args.draft[0], max_tokens=args.max_tokens).load()
     ids = h.encode_ids(prompts[0])
-    say("timing target passes")
-    target_latency = time_passes(h.target, ids, repeats=args.repeats)
 
     config = {"target": args.target, "drafts": args.draft, "prompts": args.prompts or "builtin",
               "n_prompts": len(prompts), "max_tokens": args.max_tokens, "repeats": args.repeats}
@@ -76,19 +74,25 @@ def main(argv: list[str] | None = None) -> int:
     def checkpoint(reports, partial: bool) -> None:
         if not args.json:
             return
-        rep = build_report(_short(args.target), target_latency, reports, max_k=args.max_k)
+        rep = build_report(_short(args.target), target_latencies, reports, max_k=args.max_k)
         payload = to_json(rep)
         payload.update(config=config, skipped=skipped, partial=partial,
                        elapsed_s=time.perf_counter() - t0)
         args.json.write_text(json.dumps(payload, indent=2))
 
     reports = []
+    target_latencies = []
     for i, draft_id in enumerate(args.draft):
         name = _short(draft_id)
         if i > 0:
             say(f"swapping draft -> {name}")
             h.swap_draft(draft_id)
-        say(f"[{name}] timing draft passes")
+        # The target is timed once per draft, not once per run: it is 30 seconds,
+        # it gives each draft a c_verify from the same machine state as its
+        # generations, and the spread across sessions is the drift check.
+        say(f"[{name}] timing target and draft passes")
+        target_latency = time_passes(h.target, ids, repeats=args.repeats)
+        target_latencies.append(target_latency)
         draft_latency = time_passes(h.draft, ids, repeats=args.repeats)
         say(f"[{name}] running {len(prompts)} prompts at k=0 and k=1")
         h.run(prompts[0], 1)  # warm-up, discarded
@@ -104,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         reports.append(analyse_draft(name, runs, draft_latency, target_latency))
         checkpoint(reports, partial=i + 1 < len(args.draft))  # a crash later loses one draft, not all
 
-    rep = build_report(_short(args.target), target_latency, reports, max_k=args.max_k)
+    rep = build_report(_short(args.target), target_latencies, reports, max_k=args.max_k)
     print(render(rep))
     if skipped:
         print("  skipped after a GPU failure: " + "; ".join(f"{n}: {', '.join(ps)}" for n, ps in skipped.items()))
