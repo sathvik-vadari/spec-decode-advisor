@@ -29,6 +29,24 @@ def _short(model_id: str) -> str:
     return model_id.rsplit("/", 1)[-1]
 
 
+def _run_pair(h, prompt, say, retries: int = 1):
+    """The k=0 and k=1 generations for one prompt, or None if the GPU fails twice.
+
+    A Metal command-buffer timeout kills one generation and leaves the process
+    fine; the first 7B run of this tool died that way 25 prompts into its third
+    draft and took the two finished drafts with it. Retry once, then drop the
+    prompt and say so. Both generations are dropped together so every k=1 run
+    keeps its own baseline.
+    """
+    for attempt in range(retries + 1):
+        try:
+            return h.run(prompt, 0), h.run(prompt, 1)
+        except RuntimeError as e:
+            first = str(e).splitlines()[0][:90] if str(e) else type(e).__name__
+            say(f"  {prompt.prompt_id}: {first}" + (" -- retrying" if attempt < retries else " -- skipped"))
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="spec-decode-advisor", description=__doc__.split("\n\n")[0])
     ap.add_argument("--target", required=True, help="target model id (HF hub or local path)")
@@ -51,32 +69,47 @@ def main(argv: list[str] | None = None) -> int:
     say("timing target passes")
     target_latency = time_passes(h.target, ids, repeats=args.repeats)
 
+    config = {"target": args.target, "drafts": args.draft, "prompts": args.prompts or "builtin",
+              "n_prompts": len(prompts), "max_tokens": args.max_tokens, "repeats": args.repeats}
+    skipped: dict[str, list[str]] = {}
+
+    def checkpoint(reports, partial: bool) -> None:
+        if not args.json:
+            return
+        rep = build_report(_short(args.target), target_latency, reports, max_k=args.max_k)
+        payload = to_json(rep)
+        payload.update(config=config, skipped=skipped, partial=partial,
+                       elapsed_s=time.perf_counter() - t0)
+        args.json.write_text(json.dumps(payload, indent=2))
+
     reports = []
     for i, draft_id in enumerate(args.draft):
+        name = _short(draft_id)
         if i > 0:
-            say(f"swapping draft -> {_short(draft_id)}")
+            say(f"swapping draft -> {name}")
             h.swap_draft(draft_id)
-        say(f"[{_short(draft_id)}] timing draft passes")
+        say(f"[{name}] timing draft passes")
         draft_latency = time_passes(h.draft, ids, repeats=args.repeats)
-        say(f"[{_short(draft_id)}] running {len(prompts)} prompts at k=0 and k=1")
+        say(f"[{name}] running {len(prompts)} prompts at k=0 and k=1")
         h.run(prompts[0], 1)  # warm-up, discarded
         runs = []
         for j, prompt in enumerate(prompts, 1):
-            runs.append(h.run(prompt, 0))
-            runs.append(h.run(prompt, 1))
+            pair = _run_pair(h, prompt, say)
+            if pair is None:
+                skipped.setdefault(name, []).append(prompt.prompt_id)
+            else:
+                runs.extend(pair)
             if j % 5 == 0 or j == len(prompts):
                 say(f"  {j}/{len(prompts)}")
-        reports.append(analyse_draft(_short(draft_id), runs, draft_latency, target_latency))
+        reports.append(analyse_draft(name, runs, draft_latency, target_latency))
+        checkpoint(reports, partial=i + 1 < len(args.draft))  # a crash later loses one draft, not all
 
     rep = build_report(_short(args.target), target_latency, reports, max_k=args.max_k)
     print(render(rep))
+    if skipped:
+        print("  skipped after a GPU failure: " + "; ".join(f"{n}: {', '.join(ps)}" for n, ps in skipped.items()))
     print(f"\n{time.perf_counter() - t0:.0f}s")
     if args.json:
-        payload = to_json(rep)
-        payload["config"] = {"target": args.target, "drafts": args.draft, "prompts": args.prompts or "builtin",
-                             "n_prompts": len(prompts), "max_tokens": args.max_tokens, "repeats": args.repeats}
-        payload["elapsed_s"] = time.perf_counter() - t0
-        args.json.write_text(json.dumps(payload, indent=2))
         say(f"wrote {args.json}")
     return 0
 
