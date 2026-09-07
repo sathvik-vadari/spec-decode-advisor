@@ -191,6 +191,39 @@ that measures acceptance, and finding 2 says depth does not change it. The advis
 therefore a baseline, one speculative run at k=1, and two timings. The 49-minute sweep was the
 instrument that established this; it is not the procedure (`results/04_direct_calibration.json`).
 
+**12. The tool replicated its own recommendation on a throttled machine, and the constants did
+not, which is the right failure to have found.** Three days after experiment 02 the CLI ran its
+k=1-only procedure on the same target, drafts and prompts, with the machine in Low Power Mode at
+24% battery and a browser using most of a core (`results/05_cli_replication.json`). Acceptance came
+back identical to three decimals in every domain for every draft, which under greedy decoding is
+determinism rather than evidence. The k=1 speedups of the two small drafts replicated (1.119 vs
+1.126, 1.040 vs 1.034) and so did the recommendation: 0.5B at about 1.12×. Everything measured in
+seconds did not:
+
+| | experiments 02/03 | replication |
+|---|---|---|
+| target one-token pass | 57 ms | 89 ms |
+| baseline decode | 17 tok/s | 10 tok/s |
+| `c_verify` | 0.30 | 0.38 |
+| `c_draft` 0.5B / 1.5B / 3B | 0.10 / 0.23 / 0.39 | 0.14 / 0.28 / 0.52 |
+
+The ratios moved, not only the absolutes. A capped GPU clock slows compute-bound work, the small
+draft passes and the extra verified tokens, more than the bandwidth-bound target pass, so every
+cost ratio rose by about a third. The 3B draft's k=1 speedup went from 0.90 to 1.08, and its pinned
+fixed cost came out at 0.75, below one target pass, which is unphysical: at k=1 the loop paid less
+than the sum of its timed parts. The candidate mechanism is host contention. With the CPU busy the
+per-token host overhead in plain decoding grew from about 2 ms to 9 ms (the gap between pass time
+and decode time), and a speculative round amortises it over 1.7–1.8 tokens, so speculation looks
+better than its GPU arithmetic says, most for the draft that emits most per round. Untested; it is
+the kind of effect a synchronous pass timing cannot see and a pipelined generation hides.
+
+Tonight's constants would mispredict experiment 02's k=2 and k=4 speedups by −0.04 to −0.14, so a
+report from a throttled machine does not transfer to the same machine unthrottled. Three things
+shipped because of this: the target is timed inside every draft session and the spread is reported
+as drift; a pinned fixed cost below 0.95 raises a warning that timings and generations disagree;
+and the report prints the pass time first so you can compare it with your last run. Run the tool
+plugged in, Low Power Mode off, machine otherwise idle.
+
 ## The approach
 
 Run the workload, count accepted tokens per round, and estimate two things.
@@ -274,6 +307,10 @@ should be near zero. The small drafts are also overhead-bound here (a 0.5B pass 
 parameter ratio), which is why finding 8's "smallest draft wins" may invert where a 3B pass is
 genuinely 0.04 of a 70B pass. The *method* — fit the terms from measured speedups, and measure
 `c_verify` directly — is what transfers. The constants do not.
+
+**Machine state is a hidden variable in every timing here, and finding 12 measured how large.** A
+throttled GPU moves the cost ratios by a third and can flip which draft looks second-best. The
+acceptance numbers are immune; nothing in seconds is.
 
 **Experiments 02 and 03 ran under memory pressure.** The machine had roughly 5 GB free with other
 applications open; the 3B session peaked at 6.3 GB. Interleaved per-prompt baselines control for

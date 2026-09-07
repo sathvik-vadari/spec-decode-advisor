@@ -173,3 +173,39 @@ that earned this; it is no longer the procedure.
 Not yet honest about: batch size, still.
 
 Next: the CLI, which now has a complete and cheap procedure to wrap.
+
+## 2026-09-07 — the CLI, and a replication that half-failed
+
+Q: does the k=1-only procedure, run as the tool, reproduce experiment 02's answer on a different
+day?
+
+Built `advisor.py` (analysis, pure, tested on synthetic runs), `cli.py`, prompt-file loading. First
+7B run died on a Metal command-buffer GPU timeout 25 prompts into the third draft and, because the
+report was written only at the end, lost the two finished drafts with it. Added a one-retry-then-skip
+per prompt and a checkpoint after every draft; the rerun hit the same timeout on copy_translate and
+survived it. 91 tests.
+
+The replication. Acceptance identical to three decimals everywhere -- greedy is deterministic, so
+that is not evidence. k=1 speedups replicated for 0.5B and 1.5B (1.119/1.126, 1.040/1.034), and the
+recommendation held: 0.5B, ~1.12x. But the target pass was 89 ms against 57, baseline 10 tok/s
+against 17, c_verify 0.38 against 0.30, every c_draft up a third. Cause found mid-run: Low Power
+Mode on, battery 24%, Chrome at most of a core. A capped GPU clock slows the compute-bound parts
+(small draft passes, extra verified tokens) more than the bandwidth-bound target pass, so the
+*ratios* moved, not just the absolutes. Nothing measured in seconds is invariant to machine state,
+and the whole cost side is measured in seconds.
+
+The unphysical number: the 3B's k=1 speedup went 0.90 -> 1.08 and its pinned fixed cost came out
+0.75, below one target pass. The loop paid less than the sum of its timed parts. Best guess is host
+contention: per-token host overhead in plain decode went from ~2 ms to ~9 ms, and a speculative
+round amortises it over ~1.8 tokens. A synchronous pass timing can't see that; pipelined generation
+hides it. Untested.
+
+Shipped because of it: target timed per draft session with a drift warning; a warning when the
+pinned fixed cost is below 0.95; pass time printed first. Tonight's constants would mispredict
+exp 02's k=2/k=4 by -0.04 to -0.14, so: plugged in, Low Power Mode off, idle machine, and compare
+the pass time with the last run.
+
+Not yet honest about: batch size, still. And the host-contention mechanism is a guess.
+
+Next: energy, or batch size. Batch size is the bigger hole and needs a batched engine; mlx_lm's
+speculative path is batch 1. Decide next session.
