@@ -251,6 +251,12 @@ class MeasuredCostModel:
 
     c_draft: float
     pass_curve: dict[int, float]
+    overhead: float = 0.0
+    """Per-round host work the passes do not contain -- the accept loop, the
+    cache rewind, copying tokens back -- in target passes. Experiment 07 found
+    0.01-0.09 of a pass on AC, a few milliseconds, largest at k=1. Pin it from
+    the one speculative run the tool makes anyway (`pin_overhead`); it is the
+    only number here not from a direct timing, and it is small."""
 
     def __post_init__(self) -> None:
         if 1 not in self.pass_curve or len(self.pass_curve) < 2:
@@ -281,7 +287,7 @@ class MeasuredCostModel:
         return self.pass_curve[lo] * (1 - f) + self.pass_curve[hi] * f
 
     def round_cost(self, k: int) -> float:
-        return k * self.c_draft + self.verify_cost(k + 1)
+        return self.overhead + k * self.c_draft + self.verify_cost(k + 1)
 
     def speedup(self, p: float, k: int) -> float:
         return expected_tokens_per_round(p, k) / self.round_cost(k)
@@ -289,6 +295,18 @@ class MeasuredCostModel:
     def best_depth(self, p: float, max_k: int = 12) -> tuple[int, float]:
         options = [(0, 1.0)] + [(k, self.speedup(p, k)) for k in range(1, max_k + 1)]
         return max(options, key=lambda kv: kv[1])
+
+    def pin_overhead(self, k: int, p: float, measured_speedup: float) -> "MeasuredCostModel":
+        """The same model with `overhead` set so it reproduces one measured depth.
+
+        Everything else is timed; this is the one residual. If it comes out
+        well below zero the timings overstate the loop (a busy host, a throttled
+        GPU); well above 0.3 and something per round is not in the model."""
+        if k <= 0 or measured_speedup <= 0:
+            raise ValueError("need a speculative depth and a positive speedup")
+        implied = expected_tokens_per_round(p, k) / measured_speedup
+        h = implied - (k * self.c_draft + self.verify_cost(k + 1))
+        return MeasuredCostModel(c_draft=self.c_draft, pass_curve=self.pass_curve, overhead=h)
 
     def breakeven_acceptance(self, k: int, tol: float = 1e-6) -> float:
         lo, hi = 0.0, 1.0

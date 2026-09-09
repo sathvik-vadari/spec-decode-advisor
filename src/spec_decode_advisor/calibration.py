@@ -102,18 +102,21 @@ def time_passes(
         for _ in range(warmup):
             mx.eval(model(y if batch > 1 else y[None], cache=kv))
             C.trim_prompt_cache(kv, n)
-    out: dict[int, float] = {}
-    for n in tokens:
+    # The first token count measured reads a few ms high even after the untimed
+    # pass (two runs two minutes apart: 46.1 and 50.7 ms for one token, while
+    # every other count agreed within 1 ms), and everything is normalised by
+    # it. So measure the first count again at the end and pool the samples.
+    schedule = list(tokens) + [tokens[0]]
+    samples: dict[int, list[float]] = {n: [] for n in tokens}
+    for n in schedule:
         y = mx.array([100 + i for i in range(n)])
         if batch > 1:
             y = mx.repeat(y[None], batch, axis=0)
-        ts = []
         for i in range(warmup + repeats):
             t = time.perf_counter()
             mx.eval(model(y if batch > 1 else y[None], cache=kv))
             dt = time.perf_counter() - t
             C.trim_prompt_cache(kv, n)
             if i >= warmup:
-                ts.append(dt)
-        out[n] = statistics.median(ts)
-    return PassLatency(out)
+                samples[n].append(dt)
+    return PassLatency({n: statistics.median(ts) for n, ts in samples.items()})

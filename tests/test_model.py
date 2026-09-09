@@ -288,3 +288,15 @@ def test_experiment_06_speedups_are_predicted_with_nothing_fitted():
     for k, (p, s) in measured.items():
         implied_round_cost = expected_tokens_per_round(p, k) / s
         assert abs(implied_round_cost - m.round_cost(k)) < 0.15, k
+
+
+def test_pinning_the_overhead_reproduces_that_depth_and_moves_the_others_together():
+    curve = {1: 1.0, 2: 1.0, 3: 1.02, 4: 1.15, 5: 1.4, 7: 2.1}
+    base = MeasuredCostModel(c_draft=0.1, pass_curve=curve)
+    truth = MeasuredCostModel(c_draft=0.1, pass_curve=curve, overhead=0.08)
+    pinned = base.pin_overhead(1, 0.7, truth.speedup(0.7, 1))
+    assert pinned.overhead == pytest.approx(0.08)
+    for k in (2, 3, 4, 6):
+        assert pinned.speedup(0.7, k) == pytest.approx(truth.speedup(0.7, k))
+    with pytest.raises(ValueError):
+        base.pin_overhead(0, 0.7, 1.2)
