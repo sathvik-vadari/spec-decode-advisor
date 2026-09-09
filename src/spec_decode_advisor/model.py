@@ -19,7 +19,7 @@ and each round emits E[j] + 1 tokens for one target forward pass.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 
@@ -220,3 +220,82 @@ def fit_fixed_cost(k: int, p: float, measured_speedup: float, slope: float) -> C
         raise ValueError("speedup must be positive")
     fixed = expected_tokens_per_round(p, k) / measured_speedup - slope * k
     return CostModel(draft_cost_ratio=slope, fixed_cost=fixed)
+
+
+# ---- a cost model with no fitted parameters -----------------------------------
+# Experiment 06 measured round costs of 1.14, 1.23, 1.43, 1.78, 2.61 target
+# passes at k = 1, 2, 3, 4, 6 on AC power. That is convex, and a straight line
+# through it puts the intercept at 0.67 -- below one target pass, which is
+# impossible. The curvature is the target's own pass cost over k+1 tokens: flat
+# while the extra positions hide under the weight read, then a ramp, then a
+# staircase of GEMM tiles (experiment 05). Subtract the *measured* pass-cost
+# curve and k draft passes from those round costs and what remains is zero to
+# within 0.1. There is no fixed cost. There never was one; it was the
+# linearisation error of a convex curve.
+
+
+@dataclass(frozen=True, slots=True)
+class MeasuredCostModel:
+    """Round cost from two direct timings and nothing fitted.
+
+        round_cost(k) = k * c_draft + V(k + 1)
+
+    `pass_curve` is V: the target's forward pass over T tokens relative to its
+    pass over one token, so V(1) == 1. Measured with `calibration.time_passes`
+    at T = 1 .. max_k + 1; between measured points it is interpolated, beyond
+    the last one extrapolated along the final segment. `c_draft` is the draft's
+    one-token pass over the target's.
+
+    Same interface as `CostModel`, so the recommender takes either.
+    """
+
+    c_draft: float
+    pass_curve: dict[int, float]
+
+    def __post_init__(self) -> None:
+        if 1 not in self.pass_curve or len(self.pass_curve) < 2:
+            raise ValueError("pass_curve needs V(1) and at least one more point")
+        if abs(self.pass_curve[1] - 1.0) > 1e-9:
+            raise ValueError("pass_curve must be relative: V(1) == 1")
+
+    @classmethod
+    def from_latency(cls, c_draft: float, latency: Mapping[int, float]) -> "MeasuredCostModel":
+        """From raw pass latencies (any unit); normalises by the one-token pass."""
+        one = latency[1]
+        return cls(c_draft=c_draft, pass_curve={int(t): v / one for t, v in latency.items()})
+
+    def verify_cost(self, tokens: int) -> float:
+        """V(tokens): what a pass over `tokens` positions costs, in one-token passes."""
+        ts = sorted(self.pass_curve)
+        if tokens in self.pass_curve:
+            return self.pass_curve[tokens]
+        if tokens < ts[0]:
+            return self.pass_curve[ts[0]]
+        if tokens > ts[-1]:
+            a, b = ts[-2], ts[-1]
+            slope = (self.pass_curve[b] - self.pass_curve[a]) / (b - a)
+            return self.pass_curve[b] + slope * (tokens - b)
+        lo = max(t for t in ts if t < tokens)
+        hi = min(t for t in ts if t > tokens)
+        f = (tokens - lo) / (hi - lo)
+        return self.pass_curve[lo] * (1 - f) + self.pass_curve[hi] * f
+
+    def round_cost(self, k: int) -> float:
+        return k * self.c_draft + self.verify_cost(k + 1)
+
+    def speedup(self, p: float, k: int) -> float:
+        return expected_tokens_per_round(p, k) / self.round_cost(k)
+
+    def best_depth(self, p: float, max_k: int = 12) -> tuple[int, float]:
+        options = [(0, 1.0)] + [(k, self.speedup(p, k)) for k in range(1, max_k + 1)]
+        return max(options, key=lambda kv: kv[1])
+
+    def breakeven_acceptance(self, k: int, tol: float = 1e-6) -> float:
+        lo, hi = 0.0, 1.0
+        while hi - lo > tol:
+            mid = (lo + hi) / 2
+            if self.speedup(mid, k) < 1.0:
+                lo = mid
+            else:
+                hi = mid
+        return hi

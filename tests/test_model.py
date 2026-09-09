@@ -229,3 +229,62 @@ def test_fixed_cost_needs_a_speculative_depth_and_a_positive_speedup():
         fit_fixed_cost(0, 0.7, 1.0, slope=0.3)
     with pytest.raises(ValueError):
         fit_fixed_cost(2, 0.7, 0.0, slope=0.3)
+
+
+# ---- the measured cost model: no fitted parameters -----------------------
+
+from spec_decode_advisor.model import MeasuredCostModel  # noqa: E402
+
+
+def test_a_flat_pass_curve_is_free_verification():
+    # verifying k+1 tokens costs the same as one: round cost is one pass plus k draft passes
+    m = MeasuredCostModel(c_draft=0.1, pass_curve={1: 1.0, 2: 1.0, 5: 1.0, 9: 1.0})
+    for k in (1, 2, 4, 8):
+        assert m.round_cost(k) == pytest.approx(1.0 + 0.1 * k)
+        assert m.speedup(0.7, k) == pytest.approx(CostModel(draft_cost_ratio=0.1).speedup(0.7, k))
+
+
+def test_a_linear_pass_curve_reproduces_the_linear_model():
+    curve = {t: 1.0 + 0.3 * (t - 1) for t in (1, 2, 3, 5, 9)}
+    m = MeasuredCostModel(c_draft=0.1, pass_curve=curve)
+    lin = CostModel(draft_cost_ratio=0.4, fixed_cost=1.0)
+    for k in (1, 2, 4, 8):
+        assert m.round_cost(k) == pytest.approx(lin.round_cost(k))
+
+
+def test_interpolates_between_and_extrapolates_beyond_measured_points():
+    m = MeasuredCostModel(c_draft=0.0, pass_curve={1: 1.0, 3: 1.0, 5: 1.4})
+    assert m.verify_cost(2) == pytest.approx(1.0)
+    assert m.verify_cost(4) == pytest.approx(1.2)
+    assert m.verify_cost(7) == pytest.approx(1.8)      # along the last segment
+
+
+def test_from_latency_normalises_by_the_one_token_pass():
+    m = MeasuredCostModel.from_latency(0.1, {1: 50.0, 2: 50.0, 5: 75.0})
+    assert m.pass_curve == {1: 1.0, 2: 1.0, 5: 1.5}
+    with pytest.raises(ValueError):
+        MeasuredCostModel(c_draft=0.1, pass_curve={1: 2.0, 2: 2.0})
+    with pytest.raises(ValueError):
+        MeasuredCostModel(c_draft=0.1, pass_curve={2: 1.0, 3: 1.1})
+
+
+def test_a_convex_curve_gives_an_interior_best_depth():
+    # free to 4 tokens then steep: the sweet spot is where the free region ends
+    curve = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.1, 5: 1.4, 6: 1.7, 7: 2.1, 9: 2.6}
+    m = MeasuredCostModel(c_draft=0.1, pass_curve=curve)
+    k, s = m.best_depth(0.7, max_k=8)
+    assert k in (2, 3)
+    assert s > m.speedup(0.7, 1) and s > m.speedup(0.7, 6)
+
+
+def test_experiment_06_speedups_are_predicted_with_nothing_fitted():
+    # committed pass-cost curve from experiment 05 (AC, idle), ms per pass over T tokens
+    curve_ms = {1: 47.3, 2: 48.0, 3: 48.4, 4: 54.1, 5: 65.7, 6: 81.0, 7: 100.4}
+    m = MeasuredCostModel.from_latency(c_draft=0.098, latency=curve_ms)
+    measured = {1: (0.682, 1.479), 2: (0.688, 1.759), 3: (0.690, 1.741), 4: (0.688, 1.524), 6: (0.698, 1.166)}
+    for k, (p, s) in measured.items():
+        assert m.speedup(p, k) == pytest.approx(s, abs=0.06), k
+    # and the residual "fixed cost" is nothing
+    for k, (p, s) in measured.items():
+        implied_round_cost = expected_tokens_per_round(p, k) / s
+        assert abs(implied_round_cost - m.round_cost(k)) < 0.15, k
