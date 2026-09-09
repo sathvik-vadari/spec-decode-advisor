@@ -224,6 +224,42 @@ as drift; a pinned fixed cost below 0.95 raises a warning that timings and gener
 and the report prints the pass time first so you can compare it with your last run. Run the tool
 plugged in, Low Power Mode off, machine otherwise idle.
 
+**13. Under load the target pass is a staircase, not a line, and the model says speculation stops
+paying on this pair by batch 8.** Batch size has been the named omission since the first commit.
+mlx_lm's speculative path is batch 1, so the speedup at batch cannot be measured here, but the
+mechanism can: the target's pass over B rows and n positions, and the draft's over B rows
+(`results/05_batch_scaling.json`, AC power, idle). Acceptance does not depend on batch, so the cost
+side is the whole question.
+
+| batch | target one-token pass | vs batch 1 | plain decode tok/s | `c_verify` | 0.5B `c_draft` | predicted best |
+|---|---|---|---|---|---|---|
+| 1 | 47 ms | 1.00 | 21 | 0.09 | 0.09–0.18 | k=2, 1.32× |
+| 2 | 46 ms | 0.99 | 43 | 0.41 | 0.11 | k=1, 1.05× |
+| 4 | 52 ms | 1.10 | 77 | 0.46 | 0.12 | k=1, 1.01× |
+| 8 | 94 ms | 2.00 | 85 | 0.52 | 0.10 | do not speculate |
+| 16 | 155 ms | 3.31 | 103 | 0.53 | 0.09 | do not speculate |
+
+The one-token pass is flat to batch 4 and then grows, as predicted (P1). Verification cost rises
+with batch (P2, half right: it reached 0.53 at batch 16, not the 0.8 predicted). The draft's pass
+ratio was predicted to fall with batch and did not; it is flat at about 0.1, because the draft
+saturates at the same batch the target does (P3, failed). Net, the slope rises and the predicted
+crossover for the 0.5B draft is batch 8 (P4), batch 2 for the 1.5B. Those crossovers are model
+outputs under the assumption that the batch-1 fixed cost holds at batch, not measurements.
+
+A fine sweep of total tokens at batch 1 shows what `c_verify` is a linearisation of:
+
+```
+tokens    1   2   3   4   5   6   7   8  10  12  16  20  24  28  32 | 33  40  48  64 | 65  96
+pass ms  47  48  48  54  66  81 100 100 123 146 153 154 155 156 155 | 297 300 317 310 | 464 449
+```
+
+Flat for 1–4 tokens: bandwidth-bound, the extra rows hide under the weight read. A ramp from 5 to
+12. Then a staircase with 32-token treads, each step about 145 ms: a compute-bound GEMM tile,
+roughly 3.2 TFLOP/s against a 47 ms weight read of about 95 GB/s. Where a decode step's total
+tokens, batch times positions, falls on this staircase is what an extra verified position costs. At
+batch 1 on AC, verifying three draft tokens is free. On battery three nights earlier it was not
+(finding 9), and finding 14 takes that up.
+
 ## The approach
 
 Run the workload, count accepted tokens per round, and estimate two things.
@@ -288,7 +324,7 @@ the number that separates an M4 from an H100, and the tool prints it first.
 - [x] Cost calibration from two timings and one speculative depth, validated held-out
 - [x] CLI: `spec-decode-advisor --target ... --draft ... [--prompts ...] [--json ...]`
 - [ ] Energy: rejected drafts are burned compute, so speculation trades joules for latency
-- [ ] Batch-size effects, which published work says drive the energy crossover
+- [x] Batch-size effects: the cost side measured to batch 16, the speedup at batch predicted, not measured
 
 ## Threats to validity
 
@@ -357,4 +393,5 @@ uv run python experiments/01_depth_invariance.py   # ~6 min
 uv run python experiments/02_draft_comparison.py   # ~50 min; downloads 7B and 3B (~6 GB)
 uv run python experiments/03_verification_cost.py  # ~1 min
 uv run python experiments/04_direct_calibration.py # analysis of 02 and 03, seconds
+uv run python experiments/05_batch_scaling.py      # ~2.5 min; plugged in, idle
 ```
