@@ -90,6 +90,18 @@ def time_passes(
     kv = C.make_prompt_cache(model)
     prompt = prompt_tokens[None] if batch == 1 else mx.repeat(prompt_tokens[None], batch, axis=0)
     mx.eval(model(prompt, cache=kv))
+    # A model's first few dozen passes after loading run slow -- the 0.5B draft
+    # read 8.5 ms where every later measurement read 4.6-4.9 -- and three
+    # warm-ups per token count did not clear it. So run the whole schedule once
+    # untimed first. It costs a few seconds and makes the first number as good
+    # as the last.
+    for n in tokens:
+        y = mx.array([100 + i for i in range(n)])
+        if batch > 1:
+            y = mx.repeat(y[None], batch, axis=0)
+        for _ in range(warmup):
+            mx.eval(model(y if batch > 1 else y[None], cache=kv))
+            C.trim_prompt_cache(kv, n)
     out: dict[int, float] = {}
     for n in tokens:
         y = mx.array([100 + i for i in range(n)])
