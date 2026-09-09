@@ -45,18 +45,19 @@ def test_recovers_acceptance_and_fixed_cost_from_k1_alone():
     assert rep.p == pytest.approx(0.7, abs=1e-9)
     assert rep.by_domain["code"].p == pytest.approx(0.8)
     assert rep.by_domain["prose"].p == pytest.approx(0.6)
-    # the domains were generated at different speedups, so the pooled fixed cost
-    # is not exactly 1.15 -- it must be close, and each domain's is exact
-    assert rep.fixed_cost == pytest.approx(1.15, abs=0.03)
+    # under the synthetic linear pass curve, overhead = fixed_cost - 1; the domains
+    # were generated at different speedups so the pooled value is close, not exact
+    assert rep.overhead == pytest.approx(0.15, abs=0.03)
     assert rep.lossless_mismatches == 0
     assert rep.n_prompts == 6
 
 
-def test_single_domain_fixed_cost_is_exact():
+def test_single_domain_overhead_is_exact():
     runs = _synthetic({"workload": 0.75}, fixed_cost=1.2)
     rep = analyse_draft("d", runs, DRAFT, TARGET)
-    assert rep.fixed_cost == pytest.approx(1.2)
+    assert rep.overhead == pytest.approx(0.2)
     assert rep.cost.speedup(0.75, 1) == pytest.approx(rep.measured_speedup_k1)
+    assert rep.pass_curve[5] == pytest.approx(2.0)          # 100 ms over 50 ms
 
 
 def test_lossless_mismatches_are_counted():
@@ -102,7 +103,8 @@ def test_render_and_json_carry_the_recommendation_and_the_constants():
     assert j["overall"]["draft"] == "small"
     assert j["drafts"][0]["by_domain"]["code"]["p"] == pytest.approx(0.8)
     assert j["max_k"] == 6
-    assert j["drafts"][0]["slope"] == pytest.approx(0.35)
+    assert j["drafts"][0]["overhead"] == pytest.approx(0.1, abs=0.03)
+    assert j["drafts"][0]["pass_curve"]["9"] == pytest.approx(3.0)
 
 
 def test_target_drift_across_draft_sessions_is_reported():
@@ -125,15 +127,17 @@ def test_no_drift_no_warning_and_one_timing_is_accepted_for_many_drafts():
         build_report("t", [TARGET, TARGET, TARGET], [d1, d2])
 
 
-def test_a_fixed_cost_below_one_pass_is_flagged():
+def test_a_negative_overhead_is_flagged():
     # generate the k=1 runs as if the loop were cheaper than its timed parts
     runs = _synthetic({"w": 0.75}, fixed_cost=0.70)
     d = analyse_draft("d", runs, DRAFT, TARGET)
-    assert d.fixed_cost == pytest.approx(0.70)
+    assert d.overhead == pytest.approx(-0.30)
     text = render(build_report("t", TARGET, [d]))
-    assert "WARNING" in text and "below one target pass" in text
+    assert "WARNING" in text and "negative per-round overhead" in text
 
 
-def test_a_sane_fixed_cost_is_not_flagged():
-    d = analyse_draft("d", _synthetic({"w": 0.75}, fixed_cost=1.1), DRAFT, TARGET)
-    assert "below one target pass" not in render(build_report("t", TARGET, [d]))
+def test_a_large_overhead_is_flagged_and_a_sane_one_is_not():
+    big = analyse_draft("d", _synthetic({"w": 0.75}, fixed_cost=1.5), DRAFT, TARGET)
+    assert "large per-round overhead" in render(build_report("t", TARGET, [big]))
+    sane = analyse_draft("d", _synthetic({"w": 0.75}, fixed_cost=1.1), DRAFT, TARGET)
+    assert "WARNING" not in render(build_report("t", TARGET, [sane]))

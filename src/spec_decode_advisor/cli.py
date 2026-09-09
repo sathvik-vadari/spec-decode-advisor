@@ -6,9 +6,10 @@ with which draft, at what depth.
         --draft mlx-community/Qwen2.5-1.5B-Instruct-4bit \\
         --prompts my_workload.jsonl --json report.json
 
-Cost: two forward-pass timings per model plus two generations per prompt per
-draft (one plain, one at k=1). Nothing else. See `advisor.py` for why that is
-enough and experiment 04 for the evidence.
+Cost: a pass-curve timing of the target and a one-token timing of each draft,
+plus two generations per prompt per draft (one plain, one at k=1). Nothing
+else. See `advisor.py` for why that is enough and experiments 04 and 07 for the
+evidence.
 """
 
 from __future__ import annotations
@@ -91,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         # it gives each draft a c_verify from the same machine state as its
         # generations, and the spread across sessions is the drift check.
         say(f"[{name}] timing target and draft passes")
-        target_latency = time_passes(h.target, ids, repeats=args.repeats)
+        target_latency = time_passes(h.target, ids, tokens=tuple(range(1, args.max_k + 2)), repeats=args.repeats)
         target_latencies.append(target_latency)
         draft_latency = time_passes(h.draft, ids, repeats=args.repeats)
         say(f"[{name}] running {len(prompts)} prompts at k=0 and k=1")

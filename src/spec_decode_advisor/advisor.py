@@ -1,13 +1,16 @@
 """Turning one speculative run and two timings into a recommendation.
 
-The procedure experiment 04 validated:
+The procedure experiments 04 and 07 validated:
 
-1.  Time the target's forward pass at 1..9 tokens: `c_verify`.
+1.  Time the target's forward pass over 1 .. max_k+1 tokens: the pass-cost
+    curve V. Its shape -- flat, then a ramp, then a staircase -- is what an
+    extra verified position costs, and it is not a straight line.
 2.  Time each draft's one-token pass against the target's: `c_draft`.
 3.  Run the workload once without speculation and once at k=1 per draft. The
     k=1 run gives acceptance `p` (per position, so depth does not matter --
-    finding 2) and one measured speedup, which pins the fixed cost.
-4.  Search depths and drafts under the resulting cost models.
+    finding 2) and one measured speedup, which pins the one number the timings
+    cannot see: per-round host overhead, a few milliseconds.
+4.  Search depths and drafts under round_cost(k) = overhead + k*c_draft + V(k+1).
 
 This module is the analysis half: it takes run results and timings and returns
 a report. It touches no model, so it is tested on synthetic inputs. `cli.py` is
@@ -22,7 +25,7 @@ from typing import Sequence
 from .acceptance import bootstrap_ci, filter_rounds, pooled_acceptance
 from .calibration import PassLatency, draft_pass_ratio, verification_cost
 from .harness import RunResult, to_prompt_rounds
-from .model import Candidate, CostModel, Recommendation, fit_fixed_cost, recommend
+from .model import Candidate, MeasuredCostModel, Recommendation, recommend
 
 PIN_K = 1
 
@@ -39,8 +42,9 @@ class DomainAcceptance:
 class DraftReport:
     name: str
     c_draft: float
-    c_verify: float
-    fixed_cost: float
+    c_verify: float                 # linearised slope of the pass curve, for the reader; not used in the model
+    overhead: float                 # per-round residual pinned from k=1, in target passes
+    pass_curve: dict[int, float]    # V(T): pass over T tokens relative to one, measured
     p: float
     p_ci: tuple[float, float]
     by_domain: dict[str, DomainAcceptance]
@@ -50,8 +54,8 @@ class DraftReport:
     n_prompts: int
 
     @property
-    def cost(self) -> CostModel:
-        return CostModel(draft_cost_ratio=self.c_draft + self.c_verify, fixed_cost=self.fixed_cost)
+    def cost(self) -> MeasuredCostModel:
+        return MeasuredCostModel(c_draft=self.c_draft, pass_curve=self.pass_curve, overhead=self.overhead)
 
     def candidate(self, domain: str | None = None) -> Candidate:
         p = self.p if domain is None else self.by_domain[domain].p
@@ -99,13 +103,13 @@ def analyse_draft(
 
     c_verify = verification_cost(target_latency.seconds)
     c_draft = draft_pass_ratio(draft_latency, target_latency)
-    slope = c_draft + c_verify
+    unpinned = MeasuredCostModel.from_latency(c_draft, target_latency.seconds)
 
     rounds = to_prompt_rounds(spec)
     p = pooled_acceptance(rounds)
     p_ci = bootstrap_ci(rounds, pooled_acceptance, seed=1)
     speedup = sum(r.tokens_per_s / base[r.prompt_id].tokens_per_s for r in spec) / len(spec)
-    fixed = fit_fixed_cost(PIN_K, p, speedup, slope).fixed_cost
+    model = unpinned.pin_overhead(PIN_K, p, speedup)
 
     by_domain = {}
     for dom in sorted({r.domain for r in spec}):
@@ -120,7 +124,7 @@ def analyse_draft(
     mismatches = sum(1 for r in spec if r.text != base[r.prompt_id].text)
     base_tps = sum(b.tokens_per_s for b in base.values()) / len(base)
     return DraftReport(
-        name=name, c_draft=c_draft, c_verify=c_verify, fixed_cost=fixed,
+        name=name, c_draft=c_draft, c_verify=c_verify, overhead=model.overhead, pass_curve=model.pass_curve,
         p=p, p_ci=p_ci, by_domain=by_domain, measured_speedup_k1=speedup,
         baseline_tokens_per_s=base_tps, lossless_mismatches=mismatches, n_prompts=len(spec),
     )
@@ -160,26 +164,35 @@ def _rec(r: Recommendation) -> str:
 def render(rep: Report) -> str:
     out = []
     out.append(f"target {rep.target}")
-    out.append(f"  one-token pass {rep.target_pass_ms:.1f} ms; each extra verified token costs "
-               f"{rep.c_verify:.2f} of a pass" + ("  (verification is not free here)" if rep.c_verify > 0.1 else ""))
+    curve = rep.drafts[0].pass_curve if rep.drafts else {}
+    out.append(f"  one-token pass {rep.target_pass_ms:.1f} ms; pass over T tokens, relative: "
+               + " ".join(f"{t}:{v:.2f}" for t, v in sorted(curve.items()) if t > 1))
+    if rep.c_verify > 0.1:
+        out.append(f"  verification is not free here: about {rep.c_verify:.2f} of a pass per extra token on average")
     if rep.target_drift > 0.10:
         passes = ", ".join(f"{n} {ms:.0f} ms" for n, ms in rep.target_pass_ms_by_draft.items())
         out.append(f"  WARNING: the target's pass time moved {rep.target_drift:.0%} between draft sessions "
                    f"({passes}). The machine did not hold still; compare drafts with care.")
     out.append("")
-    out.append(f"{'draft':>8} {'c_draft':>8} {'slope':>6} {'fixed':>6} {'p':>6} {'95% CI':>16} "
+    w = max([5] + [len(d.name) for d in rep.drafts])
+    out.append(f"{'draft':>{w}} {'c_draft':>8} {'overhead':>9} {'p':>6} {'95% CI':>16} "
                f"{'k=1 meas':>9} {'best k':>7} {'pred':>6} {'lossless':>9}")
     for d in rep.drafts:
         k, s = d.cost.best_depth(d.p, rep.max_k)
-        out.append(f"{d.name:>8} {d.c_draft:>8.3f} {d.c_draft + d.c_verify:>6.3f} {d.fixed_cost:>6.3f} "
+        out.append(f"{d.name:>{w}} {d.c_draft:>8.3f} {d.overhead:>+9.3f} "
                    f"{d.p:>6.3f} [{d.p_ci[0]:.3f}, {d.p_ci[1]:.3f}] {d.measured_speedup_k1:>9.2f} "
                    f"{k:>7} {s:>6.2f} {d.n_prompts - d.lossless_mismatches:>4}/{d.n_prompts:<4}")
-    low = [d for d in rep.drafts if d.fixed_cost < 0.95]
+    low = [d for d in rep.drafts if d.overhead < -0.10]
     if low:
-        names = ", ".join(f"{d.name} {d.fixed_cost:.2f}" for d in low)
-        out.append(f"  WARNING: pinned fixed cost below one target pass ({names}). The k=1 run paid less than "
-                   "the sum of its timed parts, so the pass timings overstate in-loop cost -- usually a busy "
-                   "host or a throttled GPU. Predictions at other depths will be pessimistic.")
+        names = ", ".join(f"{d.name} {d.overhead:+.2f}" for d in low)
+        out.append(f"  WARNING: negative per-round overhead ({names}). The k=1 run paid less than the sum of "
+                   "its timed parts, so the pass timings overstate in-loop cost -- usually a busy host or a "
+                   "throttled GPU. Predictions at other depths will be pessimistic.")
+    high = [d for d in rep.drafts if d.overhead > 0.30]
+    if high:
+        names = ", ".join(f"{d.name} {d.overhead:+.2f}" for d in high)
+        out.append(f"  WARNING: large per-round overhead ({names}), more than 0.3 of a target pass. Something "
+                   "the loop does each round is not in the timings; predictions at deeper k lean on it.")
     out.append("")
     if len(rep.by_domain) > 1:
         out.append("by domain")
@@ -209,8 +222,8 @@ def to_json(rep: Report) -> dict:
         "c_verify": rep.c_verify,
         "max_k": rep.max_k,
         "drafts": [
-            {**{k: v for k, v in asdict(d).items() if k != "by_domain"},
-             "slope": d.c_draft + d.c_verify,
+            {**{k: v for k, v in asdict(d).items() if k not in ("by_domain", "pass_curve")},
+             "pass_curve": {str(t): v for t, v in d.pass_curve.items()},
              "by_domain": {dom: asdict(a) for dom, a in d.by_domain.items()}}
             for d in rep.drafts
         ],
