@@ -148,15 +148,18 @@ the fitted per-position cost minus a directly timed draft pass is 0.29–0.32 fo
 (`c_draft` = 0.10, 0.23, 0.39), so the decomposition closes to within 0.02 (finding 11). So
 
 ```
-round_cost(k) = fixed_cost + (c_draft + c_verify) · k        c_verify ≈ 0.25 here
+round_cost(k) = fixed_cost + (c_draft + c_verify) · k        c_verify ≈ 0.25 that night
 ```
 
 and `fit` recovers the sum. Speculative decoding's premise is that a k+1-token pass reads the same
-weights as a 1-token pass and costs about the same. On an M4 with 4-bit weights a 5-token
-verification costs 1.85–2.2× a 1-token pass. On an H100, where decode is deeply bandwidth-bound,
-`c_verify` should be near zero, which is why the 2–3× headline numbers come from that class of
-hardware. It is a 30-second measurement on any machine, and the advisor should take it directly
-rather than infer it.
+weights as a 1-token pass and costs about the same. That night, on an M4 with 4-bit weights, a
+5-token verification cost about twice a 1-token pass. Two later findings sharpen this. The cost is
+not a line: it is flat for a few tokens, then a ramp, then a staircase (finding 13), so `c_verify`
+is a linearisation and findings 13 and 15 replace it with the measured curve. And its value depends
+on the GPU's clock state (finding 14): at full clock on this same machine, verifying three tokens is
+free. On an H100, where decode is deeply bandwidth-bound, the flat region should extend much
+further, which is why the 2–3× headline numbers come from that class of hardware. The pass-cost
+curve is a 30-second measurement on any machine, and the advisor now takes it directly.
 
 **10. The fixed per-round cost fell toward 1.0 as predicted for the smallest draft, and rose with
 draft size, which was not predicted.** 1.378 on the 1.5B target became 1.112 on the 7B target with
@@ -165,9 +168,12 @@ pass. But 1.156 and 1.268 for the 1.5B and 3B drafts say the fixed cost has a dr
 The obvious candidate, the draft's prompt prefill (once per generation, proportional to draft size),
 was tested by fitting per domain — copy prompts are 5× longer — and does not show; it is also
 quantitatively too small. Per-domain fits scatter ±0.2 on six prompts each, so only the 3B's excess
-is clearly real. Open. One untested candidate is memory residency: the 3B session peaked at 6.3 GB
-on a machine with about 5 GB free, so the draft's weights may be evicted while the target runs and
-re-faulted each round. That would not exist with everything resident in HBM.
+is clearly real. Finding 15 later explains the *level*: a straight line fitted through convex round
+costs puts curvature into its intercept, so a "fixed cost" above one pass was never a real cost.
+It does not explain the *draft dependence*, since every draft was fitted over the same depths and
+the same curve. That part stays open. One untested candidate is memory residency: the 3B session
+peaked at 6.3 GB on a machine with about 5 GB free, so the draft's weights may be evicted while the
+target runs and re-faulted each round. That would not exist with everything resident in HBM.
 
 **11. Two 30-second timings and one speculative depth calibrate the cost model as well as the
 full sweep.** The direct slope, a timed draft pass plus the timed verification cost, lands within
@@ -260,6 +266,67 @@ tokens, batch times positions, falls on this staircase is what an extra verified
 batch 1 on AC, verifying three draft tokens is free. On battery three nights earlier it was not
 (finding 9), and finding 14 takes that up.
 
+**14. The same pair, prompts and code went from 1.15× to 1.76× between two nights. The models did
+not change; the machine's state did.** Experiment 06 reran experiment 02's 0.5B session on AC power
+with the machine idle, depths 0–6 (`results/06_power_state.json`).
+
+| depth | Sep 4: battery, after a 49-min run, memory pressure | Sep 9: AC, idle |
+|---|---|---|
+| 1 | 1.13× | 1.48× |
+| 2 | 1.15× | 1.76× |
+| 3 | not run | 1.74× |
+| 4 | 1.03× | 1.52× |
+| 6 | not run | 1.17× |
+
+Code reached 2.40× at depth 3, copy 2.01×, and prose, the hardest domain, 1.40×. Acceptance was
+identical to three decimals at every depth, so nothing about the models moved. What moved is the
+target's pass-cost curve. On the 4th the second and third verified tokens each cost about 12 ms
+extra; on the 9th they cost nothing, the curve is flat to four tokens. Lowering the GPU clock lowers
+peak compute but not memory bandwidth, so the roofline's ridge shifts and a pass over three tokens
+becomes compute-bound where at full clock it still hid under the weight read. That is why the payoff
+and the best depth moved together.
+
+What put the machine in the 4th's state is not settled. Low Power Mode is a proven cause: the
+replication under it (finding 12) was slower still. But experiment 07 ran on battery at 93% with
+Low Power Mode off and the curve kept its free region, so the power source alone is not it. The 4th
+followed a 49-minute sweep under memory pressure on a half-charged battery; thermal history, memory
+pressure and charge level are the candidates, and this project did not separate them. Two of the
+experiment's five predictions failed: the best depth was 2, tied with 3 within noise, not 3 or
+deeper; and the linear fit's slope did not fall, because on a full-clock machine the round costs are
+convex and a line is the wrong shape (finding 15). The prediction that carried the claim, a speedup
+of at least 1.35×, passed at 1.76.
+
+For anyone benchmarking speculative decoding, on any hardware: the number is a property of the
+machine's state that night. Record the state. The pass-cost curve is its fingerprint, and the tool
+prints it.
+
+**15. The cost model needs no fitted parameters: k draft passes plus the target's measured pass
+curve over k+1 tokens.** The round costs implied by experiment 06, in target passes, are 1.14, 1.23,
+1.43, 1.78 and 2.61 at depths 1, 2, 3, 4 and 6. Convex. A straight line through them, the model of
+experiments 01–04, puts its intercept at 0.67, below the one target pass every round must contain,
+and misses the measured speedups by up to 0.25 even in-sample. Replace it with
+
+```
+round_cost(k) = overhead + k · c_draft + V(k+1)
+```
+
+where V is the pass-cost curve of finding 13, timed in 30 seconds, and `c_draft` the draft's timed
+pass ratio. With overhead set to zero, nothing fitted, it predicts all five measured speedups within
+0.05 (`results/07_zero_parameter_model.json`). The fixed cost of 1.1–1.4 that experiments 01, 02
+and 04 fitted was the curvature of V absorbed into an intercept, plus whatever the throttled state
+added.
+
+Two caveats, found the hard way. The curve is normalised by the one-token pass, and three readings
+of that single number two minutes apart spanned 43.7 to 50.7 ms while every other token count
+agreed within 1 ms; that moved the level of every prediction by 0.1–0.2. The timing wrapper now
+measures the first count again at the end and pools the samples. And a per-round residual of a few
+milliseconds, the accept loop, the cache rewind, the tokens copied back, is real: 0.02–0.14 passes
+depending on the run. Pinning it from the k=1 run the tool already makes for acceptance held the
+held-out error at depths 2–6 to about 0.06 whatever the one-token reading did.
+
+So the tool's procedure is now: the target's pass curve, the draft's pass, one plain run, one run at
+depth 1, and a search. The two-parameter fit is gone.
+
 ## The approach
 
 Run the workload, count accepted tokens per round, and estimate two things.
@@ -276,13 +343,17 @@ A round that accepted all `k` draft tokens is right-censored — it ran out of d
 agreement — so it contributes to the numerator only. That censoring is the whole difference from
 `accepted / proposed`.
 
-**Cost**, by fitting `round_cost(k) = fixed_cost + draft_cost_ratio · k` to measured speedups, since
+**Cost**, from direct timings rather than a fit: `round_cost(k) = overhead + k · c_draft + V(k+1)`,
+where V is the target's measured pass-cost curve over k+1 tokens and `c_draft` the draft's pass over
+the target's. The one term the timings cannot see, per-round host overhead, is pinned from the single
+speculative run at k=1, since
 
 ```
 speedup(p, k) = (E[accepted] + 1) / round_cost(k)      E[accepted] = p(1 − p^k)/(1 − p)
 ```
 
-pins one round cost per observation.
+pins one round cost per observation. The earlier `fixed_cost + slope · k` fit is kept in the code for
+the record; finding 15 is why it went.
 
 Uncertainty is bootstrapped over *prompts*, not rounds: rounds within one generation are strongly
 autocorrelated, so treating them as independent draws gives intervals that don't survive a second
@@ -303,14 +374,15 @@ optional `id` and `domain`, or one prompt per line; omit for the built-in 30-pro
 the per-draft cost constants, acceptance per domain with a prompt-level bootstrap CI, and a
 recommendation: which draft, what depth, predicted speedup — or "do not speculate".
 
-What it costs to run is the point. Per model, two forward-pass timings (about 30 seconds). Per
-prompt per draft, two generations: one plain, one at k=1. That is the whole procedure, and
-experiment 04 is the evidence that it predicts the depths it never ran to within 0.02 of a full
-sweep. The sweep was how the procedure was earned; the tool does not repeat it.
+What it costs to run is the point. Per draft session, a pass-curve timing of the target over 1 to
+max_k+1 tokens and a one-token timing of the draft, under a minute together. Per prompt per draft,
+two generations: one plain, one at k=1. That is the whole procedure; experiments 04 and 07 are the
+evidence that it predicts the depths it never ran to within about 0.06 of a full sweep. The sweep
+was how the procedure was earned; the tool does not repeat it.
 
 The recommendation is honest about its own scope: every constant it reports is measured on the
-machine it ran on. `c_verify` in particular — what each extra verified token costs the target — is
-the number that separates an M4 from an H100, and the tool prints it first.
+machine it ran on, in the state it was in. The pass-cost curve is what separates an M4 from an
+H100, and a throttled M4 from an idle one, and the tool prints it first.
 
 ## Status
 
@@ -325,6 +397,8 @@ the number that separates an M4 from an H100, and the tool prints it first.
 - [x] CLI: `spec-decode-advisor --target ... --draft ... [--prompts ...] [--json ...]`
 - [ ] Energy: rejected drafts are burned compute, so speculation trades joules for latency
 - [x] Batch-size effects: the cost side measured to batch 16, the speedup at batch predicted, not measured
+- [x] Machine-state dependence: same pair 1.15× → 1.76× between nights; the pass curve is the fingerprint
+- [x] Cost model with no fitted parameters, validated against the depth sweep
 
 ## Threats to validity
 
@@ -344,9 +418,12 @@ parameter ratio), which is why finding 8's "smallest draft wins" may invert wher
 genuinely 0.04 of a 70B pass. The *method* — fit the terms from measured speedups, and measure
 `c_verify` directly — is what transfers. The constants do not.
 
-**Machine state is a hidden variable in every timing here, and finding 12 measured how large.** A
-throttled GPU moves the cost ratios by a third and can flip which draft looks second-best. The
-acceptance numbers are immune; nothing in seconds is.
+**Machine state is a hidden variable in every timing here, and findings 12 and 14 measured how
+large.** The same pair went from 1.15× to 1.76× between two nights on the same machine. A capped GPU
+clock moves the pass-cost curve, and with it the payoff and the best depth. The acceptance numbers
+are immune; nothing in seconds is. The state that produced the slower nights is only partly
+identified (Low Power Mode is proven; thermal history, memory pressure and charge level are not
+separated), so the tool records conditions and prints the curve rather than claiming a constant.
 
 **Experiments 02 and 03 ran under memory pressure.** The machine had roughly 5 GB free with other
 applications open; the 3B session peaked at 6.3 GB. Interleaved per-prompt baselines control for
@@ -394,4 +471,6 @@ uv run python experiments/02_draft_comparison.py   # ~50 min; downloads 7B and 3
 uv run python experiments/03_verification_cost.py  # ~1 min
 uv run python experiments/04_direct_calibration.py # analysis of 02 and 03, seconds
 uv run python experiments/05_batch_scaling.py      # ~2.5 min; plugged in, idle
+uv run python experiments/06_power_state.py        # ~15 min; plugged in, idle
+uv run python experiments/07_zero_parameter_model.py  # ~30 s; analysis of 06 plus one timing
 ```

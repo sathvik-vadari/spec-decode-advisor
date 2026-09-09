@@ -209,3 +209,48 @@ Not yet honest about: batch size, still. And the host-contention mechanism is a 
 
 Next: energy, or batch size. Batch size is the bigger hole and needs a batched engine; mlx_lm's
 speculative path is batch 1. Decide next session.
+
+## 2026-09-09 — batch, the staircase, and the night the answer changed
+
+Q1: how do the cost terms scale with batch? Q2 (unplanned): why did tonight's batch-1 verification
+cost read 0.07 when it read 0.29 on the 4th?
+
+Experiment 05 (AC, idle): the 7B pass is flat to batch 4, 2x at 8, 3.3x at 16. c_verify rises
+0.09 -> 0.53 (predicted -> 1.0: half right). c_draft is flat, not falling (predicted falling:
+wrong). Predicted crossover batch 8 for 0.5B, 2 for 1.5B -- model outputs, since mlx_lm can't
+speculate at batch. The fine sweep in total tokens is the real result: flat 1-4, ramp 5-12, then a
+staircase with 32-token treads of ~145 ms each. A GEMM tile. ~3.2 TFLOP/s on the treads against a
+~95 GB/s weight read on the floor.
+
+Q2 became experiment 06: rerun the 0.5B session on AC, idle, depths 0-6, predictions committed
+first. 1.76x at k=2 against 1.15x on the 4th. Code 2.40x. Prose 1.40x. Acceptance identical to three
+decimals. P2 (>= 1.35x) passed; P1 (best k >= 3) failed by a hair, k=2 1.759 vs k=3 1.741; P3
+(slope < 0.25) failed because the linear model is the wrong shape here. Fitted intercept 0.67 --
+below one pass, impossible.
+
+That impossibility was the lead. Round costs 1.14, 1.23, 1.43, 1.78, 2.61 at k=1,2,3,4,6 are
+convex; subtract k draft passes and the *measured* pass curve over k+1 tokens and the residual is
+~0. Experiment 07: round_cost(k) = k*c_draft + V(k+1), nothing fitted, predicts all five speedups
+within 0.05. The 2-parameter fit misses by 0.25 in-sample. The "fixed cost" of experiments 01-04
+was curvature in an intercept. Finding 10's draft-dependence of it is *not* explained by this and
+stays open.
+
+Two instrument lessons. (1) A freshly loaded model's first timings read ~1.8x high and three
+warm-ups didn't clear it; one untimed pass over the schedule does (4.41 vs 4.36 ms). This inflated
+c_draft in every CLI run so far. (2) The one-token pass, which normalises everything, read 46.1,
+50.7, 43.7 ms in three runs minutes apart while every other count agreed within 1 ms. Now measured
+twice, first and last, samples pooled. A per-round residual of 0.02-0.14 passes remains; pinning it
+from the k=1 run holds held-out error to ~0.06 regardless.
+
+On cause: the 4th's curve had no free region; tonight's does, on AC *and* on battery at 93% with
+LPM off. So it isn't the power source. The 4th followed a 49-min sweep under memory pressure on
+~50% charge. Thermal, memory pressure, charge -- not separated. LPM is proven (finding 12). Written
+as unresolved.
+
+The advisor now runs on the measured model: pass curve over 1..max_k+1, draft pass, k=0 and k=1
+runs, pin the overhead, search. 98 tests.
+
+Not yet honest about: batch-size *speedup* (predicted, not measured); the cause of the 4th's state.
+
+Next: a project-level decision. The tool is complete for its stated question. What remains is either
+the batched engine question, which this machine cannot answer, or a new project.
