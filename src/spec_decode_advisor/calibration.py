@@ -69,24 +69,36 @@ def time_passes(
     tokens: Sequence[int] = (1, 2, 3, 5, 9),
     repeats: int = 25,
     warmup: int = 3,
+    batch: int = 1,
 ) -> PassLatency:
     """Prefill `prompt_tokens` once, then time a pass over `n` fresh tokens with
     that cache for each `n`, trimming the cache back after every pass so the
     context length is identical across repeats. Median of `repeats` after
     discarding `warmup`. Token identity does not affect timing, so the ids are
-    arbitrary but valid."""
+    arbitrary but valid.
+
+    `batch` replicates the prompt into that many rows, so the pass is what a
+    serving engine pays for a decode step over `batch` concurrent requests. At
+    batch 1 decode is bandwidth-bound and extra tokens are nearly free; as the
+    batch grows the pass becomes compute-bound and every extra token, whether
+    another row or another verified position, costs the same. Where that turns
+    is a property of the hardware, and it decides whether speculation pays
+    under load."""
     import mlx.core as mx
     from mlx_lm.models import cache as C
 
     kv = C.make_prompt_cache(model)
-    mx.eval(model(prompt_tokens[None], cache=kv))
+    prompt = prompt_tokens[None] if batch == 1 else mx.repeat(prompt_tokens[None], batch, axis=0)
+    mx.eval(model(prompt, cache=kv))
     out: dict[int, float] = {}
     for n in tokens:
         y = mx.array([100 + i for i in range(n)])
+        if batch > 1:
+            y = mx.repeat(y[None], batch, axis=0)
         ts = []
         for i in range(warmup + repeats):
             t = time.perf_counter()
-            mx.eval(model(y[None], cache=kv))
+            mx.eval(model(y if batch > 1 else y[None], cache=kv))
             dt = time.perf_counter() - t
             C.trim_prompt_cache(kv, n)
             if i >= warmup:
