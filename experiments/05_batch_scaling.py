@@ -71,6 +71,7 @@ DRAFTS = {"0.5B": "mlx-community/Qwen2.5-0.5B-Instruct-4bit", "1.5B": "mlx-commu
 BATCHES = (1, 2, 4, 8, 16)
 POSITIONS = (1, 2, 3, 5)
 REPEATS, WARMUP = 15, 3
+FINE_T = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 28, 32, 33, 40, 48, 56, 64, 65, 96)
 # from experiment 02 / results 04: pooled acceptance and the batch-1 pinned fixed cost per draft
 ACCEPTANCE = {"0.5B": 0.688, "1.5B": 0.739}
 FIXED_B1 = {"0.5B": 1.103, "1.5B": 1.156}
@@ -115,6 +116,15 @@ def main() -> None:
         lat = time_passes(target, ids, tokens=POSITIONS, repeats=REPEATS, warmup=WARMUP, batch=B)
         target_lat[B] = {n: s * 1e3 for n, s in lat.seconds.items()}
         print(f"  B={B:>2}: " + "  ".join(f"n={n}: {ms:7.1f} ms" for n, ms in target_lat[B].items()), flush=True)
+
+    # A fine sweep of total tokens at batch 1, because the grid above is not
+    # smooth: the cost looks like a step function of B * n. This is the direct
+    # look at the kernel's tiling, and it is what c_verify is a linearisation of.
+    print("fine sweep, batch 1", flush=True)
+    fine = time_passes(target, ids, tokens=FINE_T, repeats=REPEATS, warmup=WARMUP)
+    fine_ms = {T: s * 1e3 for T, s in fine.seconds.items()}
+    for T in FINE_T:
+        print(f"  T={T:>3}: {fine_ms[T]:7.1f} ms  x1={fine_ms[T] / fine_ms[1]:.2f}", flush=True)
 
     draft_lat = {}
     for name, mid in DRAFTS.items():
@@ -163,6 +173,7 @@ def main() -> None:
                    "fixed_cost_assumed_b1": FIXED_B1, "prompt_id": PROMPTS[6].prompt_id},
         "conditions": cond,
         "target_latency_ms": {str(B): {str(n): ms for n, ms in d.items()} for B, d in target_lat.items()},
+        "target_pass_ms_vs_total_tokens_b1": {str(T): ms for T, ms in fine_ms.items()},
         "draft_latency_ms": {name: {str(B): ms for B, ms in d.items()} for name, d in draft_lat.items()},
         "per_batch": {str(B): e for B, e in per_batch.items()},
         "predicted_crossover_batch": crossover,
