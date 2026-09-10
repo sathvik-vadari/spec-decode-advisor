@@ -254,3 +254,42 @@ Not yet honest about: batch-size *speedup* (predicted, not measured); the cause 
 
 Next: a project-level decision. The tool is complete for its stated question. What remains is either
 the batched engine question, which this machine cannot answer, or a new project.
+
+## 2026-09-10 — figures, and an experiment stopped for the right reason
+
+Made the four figures the README had been missing, from committed results via `analysis/figures.py`:
+the pass-cost staircase, the two-nights speedup curves with the zero-parameter model, acceptance by
+domain and draft, and the batch-scaling pair. Three-slot categorical palette, validated.
+
+Then experiment 08: a 2x2 on what put the machine in Sep 4's state -- thermal history (15-min matmul
+burn, its own throughput logged) x memory pressure (host memory held near 15% free) -- with four
+predictions committed before the run. Three attempts, none completed, each taught something:
+
+- Attempt 1: 10 GB of `np.ones` allocated in 2.5 s and free memory went *up*. Identical pages
+  compress to nothing under the macOS memory compressor. Pressure has to be incompressible.
+- Attempt 2, with random data: 3.5 GB took free memory from 33% to 12%. The pressured pass curve
+  was the one real datum of the night: one-token pass 43.6 -> 54.3 ms, **but the free region
+  stayed** -- V(2) 1.00, V(3) 1.06. Pressure slows the bandwidth-bound weight read; it does not make
+  the extra tokens expensive. Sep 4 had both, so pressure alone is not Sep 4. Then the first
+  speculative generation at 12% free died with a GPU timeout. Third such timeout in the project,
+  every one with memory tight: that correlation is now a recorded fact.
+- Attempt 3, with retries and 15%: the reference cell's pass read 57.7 ms against 43.6 fifteen
+  minutes earlier, and a GPU timeout hit the warm-up before any pressure was applied. `ps` showed
+  why -- an npm build, a Next.js dev server and a VM, each at a quarter to a third of a core.
+  Sathvik was working on the machine. Stopped it.
+
+Stopping was the correct reading of findings 12 and 14: a machine-state experiment run under
+someone else's workload measures the workload. The code is committed and the design stands. It
+needs: plugged in, Low Power Mode off, no dev servers or VMs (`ps -Ao pcpu,comm -r | head`), and 30
+idle minutes before the cold cells. Battery went 65% -> 48% in 20 minutes of these runs; that is
+also a reason to wait for AC.
+
+Instrument note: V(2) and V(3) read below 1.0 in two cells tonight (0.89, 0.89 and 1.00, 0.97),
+i.e. the two- and three-token passes timed faster than the one-token pass. With the first count
+measured twice and pooled that should not happen unless the whole run is being perturbed at the
+~5 ms level. It was. Under contention the pass curve's first point is the least trustworthy.
+
+Not yet honest about: what put the machine in Sep 4's state. Pressure is now ruled out as the sole
+cause; thermal is untested.
+
+Next: rerun 08 on an idle, plugged-in machine. Then the project-level decision.
