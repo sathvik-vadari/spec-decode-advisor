@@ -12,6 +12,19 @@ So the honest answer to "should I turn this on?" is "measure it" — and there i
 the measuring. Teams enable it, see a number, and can't tell whether a different draft model or a
 different depth would be better, or whether they should have left it off.
 
+## At a glance
+
+![Same models, same prompts, same code: the machine's state set the speedup](figures/speedup_two_nights.png)
+
+Two things this project measured that the speculative-decoding literature mostly assumes. First,
+whether speculation pays is not a property of the model pair: the same 7B target and 0.5B draft on
+the same 30 prompts gave 1.15× one night and 1.76× five nights later on the same machine, with
+acceptance identical to three decimals, because the GPU's clock state moved the cost of verifying
+extra tokens (finding 14). Second, that cost is not a line: a forward pass over 1 to 4 tokens costs
+the same, then ramps, then climbs in 32-token steps (finding 13), and once you time that curve
+directly the whole cost model needs no fitted parameters (finding 15). The tool built on this asks
+for two 30-second timings and one speculative run, and says which draft, at what depth, or neither.
+
 ## The answers so far
 
 Findings 1–6 are from experiment 01: Qwen2.5-1.5B-Instruct-4bit with a 0.5B draft, 30 prompts
@@ -134,6 +147,8 @@ and at k=4 it would need `p` = 0.91 against a measured 0.77. The 1.5B would need
 that way. Whether that holds where a draft pass is cheap relative to the target (a 70B target on an
 H100) is what the tool must measure rather than assume.
 
+![Acceptance by task domain and draft](figures/acceptance_by_domain.png)
+
 Domain ordering held with one swap: code overtook copy on the 7B target, for all three drafts
 (0.830 vs 0.800 with the 0.5B draft). One reading is that the 7B paraphrases where the 1.5B
 restated, so "copy" acceptance depends on how literally the *target* copies. Untested.
@@ -252,7 +267,11 @@ saturates at the same batch the target does (P3, failed). Net, the slope rises a
 crossover for the 0.5B draft is batch 8 (P4), batch 2 for the 1.5B. Those crossovers are model
 outputs under the assumption that the batch-1 fixed cost holds at batch, not measurements.
 
+![One-token pass and verification cost against batch size](figures/batch_scaling.png)
+
 A fine sweep of total tokens at batch 1 shows what `c_verify` is a linearisation of:
+
+![The 7B pass cost against tokens per pass](figures/pass_cost_staircase.png)
 
 ```
 tokens    1   2   3   4   5   6   7   8  10  12  16  20  24  28  32 | 33  40  48  64 | 65  96
@@ -466,6 +485,7 @@ by batch size.
 uv sync
 uv run pytest
 uv run spec-decode-advisor --target <id> --draft <id> [--draft <id>] [--prompts FILE] [--json OUT]
+uv run python analysis/figures.py                  # regenerate figures/ from results/
 uv run python experiments/01_depth_invariance.py   # ~6 min
 uv run python experiments/02_draft_comparison.py   # ~50 min; downloads 7B and 3B (~6 GB)
 uv run python experiments/03_verification_cost.py  # ~1 min
