@@ -106,9 +106,13 @@ class Pressure:
         self._thread: threading.Thread | None = None
 
     def start(self) -> dict:
+        # Random bytes, not ones: the first attempt allocated 10 GB of np.ones in
+        # 2.5 s and free memory went *up* -- identical pages compress to nothing
+        # under the macOS memory compressor. Incompressible data has to be paid for.
+        rng = np.random.default_rng(0)
         t0 = time.perf_counter()
         while free_pct() > self.target and len(self.chunks) * 0.5 < self.cap:
-            c = np.ones(512 * 1024 * 1024 // 8, dtype=np.float64)   # 512 MB, written so it is resident
+            c = rng.random(512 * 1024 * 1024 // 8, dtype=np.float64)   # 512 MB, incompressible
             self.chunks.append(c)
         self._thread = threading.Thread(target=self._touch, daemon=True)
         self._thread.start()
