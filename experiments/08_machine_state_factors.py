@@ -164,9 +164,11 @@ def measure(h: Harness, label: str) -> dict:
     print(f"[{label}] conditions {json.dumps(conditions())}", flush=True)
     ids = h.encode_ids(PROMPTS[6])
     timeouts = 0
-    (t, n), _ = _retry(lambda: (time_passes(h.target, ids, tokens=TOKENS, repeats=15), 0), "target timing"), None
+    t, n1 = _retry(lambda: time_passes(h.target, ids, tokens=TOKENS, repeats=15), "target timing")
     d, n2 = _retry(lambda: time_passes(h.draft, ids, tokens=(1,), repeats=15), "draft timing")
-    timeouts += n2
+    if t is None or d is None:
+        raise RuntimeError(f"{label}: pass timing failed twice")
+    timeouts += n1 + n2
     curve = {n: s / t.one_token for n, s in t.seconds.items()}
     print(f"  pass {t.one_token * 1e3:.1f} ms; V: " + " ".join(f"{n}:{v:.2f}" for n, v in curve.items() if n > 1), flush=True)
 
