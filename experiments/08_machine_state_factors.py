@@ -68,7 +68,7 @@ TOKENS = tuple(range(1, 10))
 SUBSET = [PROMPTS[i] for i in (0, 1, 6, 7, 12, 13, 18, 19, 24, 25)]   # two per domain
 K = 2
 BURN_S = 900
-PRESSURE_TARGET_FREE_PCT = 12
+PRESSURE_TARGET_FREE_PCT = 15   # 12% killed the first speculative generation with a GPU timeout
 PRESSURE_CAP_GB = 10
 OUT = ROOT / "results" / "08_machine_state_factors.json"
 
@@ -148,25 +148,44 @@ def burn(seconds: int) -> list[dict]:
     return log
 
 
+def _retry(fn, label: str, attempts: int = 2):
+    """GPU command-buffer timeouts have hit this project three times, always with
+    memory tight. One kills a generation and leaves the process fine. Retry once,
+    then give up on that item and count it -- the count is data."""
+    for i in range(attempts):
+        try:
+            return fn(), i
+        except RuntimeError as e:
+            print(f"    {label}: {str(e).splitlines()[0][:80]}" + (" -- retrying" if i + 1 < attempts else " -- skipped"), flush=True)
+    return None, attempts
+
+
 def measure(h: Harness, label: str) -> dict:
     print(f"[{label}] conditions {json.dumps(conditions())}", flush=True)
     ids = h.encode_ids(PROMPTS[6])
-    t = time_passes(h.target, ids, tokens=TOKENS, repeats=15)
-    d = time_passes(h.draft, ids, tokens=(1,), repeats=15)
+    timeouts = 0
+    (t, n), _ = _retry(lambda: (time_passes(h.target, ids, tokens=TOKENS, repeats=15), 0), "target timing"), None
+    d, n2 = _retry(lambda: time_passes(h.draft, ids, tokens=(1,), repeats=15), "draft timing")
+    timeouts += n2
     curve = {n: s / t.one_token for n, s in t.seconds.items()}
     print(f"  pass {t.one_token * 1e3:.1f} ms; V: " + " ".join(f"{n}:{v:.2f}" for n, v in curve.items() if n > 1), flush=True)
 
-    h.run(SUBSET[0], K)
-    results = []
+    _, n3 = _retry(lambda: h.run(SUBSET[0], K), "warm-up"); timeouts += n3
+    results, skipped = [], []
     for p in SUBSET:
-        results.append(h.run(p, 0))
-        results.append(h.run(p, K))
+        pair, n4 = _retry(lambda: (h.run(p, 0), h.run(p, K)), p.prompt_id)
+        timeouts += n4
+        if pair is None:
+            skipped.append(p.prompt_id)
+        else:
+            results.extend(pair)
     base = {r.prompt_id: r.tokens_per_s for r in results if r.k == 0}
     spec = [r for r in results if r.k == K]
     speedup = sum(r.tokens_per_s / base[r.prompt_id] for r in spec) / len(spec)
     p_acc = pooled_acceptance(to_prompt_rounds(spec))
     print(f"  baseline {sum(base.values()) / len(base):.1f} tok/s; k={K} speedup {speedup:.3f}; p {p_acc:.3f}", flush=True)
-    return {"conditions": conditions(), "target_pass_ms": t.one_token * 1e3,
+    return {"conditions": conditions(), "gpu_timeouts": timeouts, "skipped_prompts": skipped,
+            "target_pass_ms": t.one_token * 1e3,
             "target_latency_ms": {str(n): s * 1e3 for n, s in t.seconds.items()},
             "pass_curve": {str(n): v for n, v in curve.items()},
             "draft_pass_ms": d.one_token * 1e3, "c_draft": d.one_token / t.one_token,
